@@ -12,7 +12,7 @@ struct AwardsView: View {
 
     /// Cheap key that changes when tasks/completions change; drives recompute.
     private var statsKey: String {
-        "\(tasks.count)-\(tasks.reduce(0) { $0 + $1.completions.count })"
+        "\(tasks.count)-\(tasks.reduce(0) { $0 + ($1.completions?.count ?? 0) })"
     }
 
     var body: some View {

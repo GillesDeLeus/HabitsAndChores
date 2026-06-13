@@ -22,7 +22,7 @@ struct TodayView: View {
     /// Cheap key that changes whenever a task or completion is added/removed, used
     /// to recompute the (relatively expensive) gamification summary only when needed.
     private var statsKey: String {
-        "\(tasks.count)-\(tasks.reduce(0) { $0 + $1.completions.count })"
+        "\(tasks.count)-\(tasks.reduce(0) { $0 + ($1.completions?.count ?? 0) })"
     }
 
     var body: some View {

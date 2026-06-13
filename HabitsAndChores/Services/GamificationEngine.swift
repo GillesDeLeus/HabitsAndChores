@@ -46,7 +46,7 @@ enum GamificationEngine {
         // Per-completion aggregation.
         var categoriesWithDone: Set<String> = []
         for task in tasks where !task.isArchived {
-            for c in task.completions where c.status == .done {
+            for c in (task.completions ?? []) where c.status == .done {
                 s.totalCompleted += 1
                 switch task.kind {
                 case .chore: s.choreCompleted += 1

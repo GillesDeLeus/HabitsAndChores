@@ -46,28 +46,32 @@ enum TaskCategory: String, Codable, CaseIterable, Identifiable {
 
 @Model
 final class TaskItem {
-    var id: UUID
-    var title: String
-    var details: String
-    var kindRaw: String
-    var categoryRaw: String
-    var frequency: FrequencyRule
-    var symbolName: String
+    // All stored attributes have default values so the schema is valid for
+    // CloudKit mirroring (which requires every attribute to be optional or
+    // defaulted). The initializer overwrites these for real instances.
+    var id: UUID = UUID()
+    var title: String = ""
+    var details: String = ""
+    var kindRaw: String = TaskKind.chore.rawValue
+    var categoryRaw: String = TaskCategory.other.rawValue
+    var frequency: FrequencyRule = FrequencyRule.daily
+    var symbolName: String = "checklist"
     /// Stored hue 0...1 used to derive the accent color.
-    var colorHue: Double
+    var colorHue: Double = 0.58
     /// First date the task is active / scheduling anchor.
-    var startDate: Date
+    var startDate: Date = Date.now
     /// Optional preferred reminder time (hour/minute encoded via DateComponents on the day).
     var reminderHour: Int?
     var reminderMinute: Int?
-    var isArchived: Bool
+    var isArchived: Bool = false
     var createdFromTemplateID: String?
-    var createdAt: Date
+    var createdAt: Date = Date.now
     /// User-controlled manual ordering (lower = higher in the list).
     var sortIndex: Int = 0
 
+    // CloudKit requires relationships to be optional.
     @Relationship(deleteRule: .cascade, inverse: \Completion.task)
-    var completions: [Completion] = []
+    var completions: [Completion]? = nil
 
     init(
         id: UUID = UUID(),
@@ -113,10 +117,10 @@ final class TaskItem {
 
     /// Whether the task has a completion logged as done for the given day.
     func isCompleted(on day: Date, calendar: Calendar = .current) -> Bool {
-        completions.contains { $0.status == .done && calendar.isDate($0.scheduledDate, inSameDayAs: day) }
+        (completions ?? []).contains { $0.status == .done && calendar.isDate($0.scheduledDate, inSameDayAs: day) }
     }
 
     func completion(on day: Date, calendar: Calendar = .current) -> Completion? {
-        completions.first { calendar.isDate($0.scheduledDate, inSameDayAs: day) }
+        (completions ?? []).first { calendar.isDate($0.scheduledDate, inSameDayAs: day) }
     }
 }

@@ -62,6 +62,18 @@ targets:
         # CloudKit access so the widget shares the synced store with the app.
         CODE_SIGN_ENTITLEMENTS: HabitsAndChoresWidget/HabitsAndChoresWidget.entitlements
 
+  HabitsAndChoresTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Tests
+    dependencies:
+      - target: HabitsAndChores
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+        # Logic tests; no host app needed.
+
 # Explicit shared scheme for the app so it is always generated and visible in Xcode
 # (the widget builds as a dependency; its own scheme is still auto-created for debugging).
 schemes:
@@ -69,9 +81,11 @@ schemes:
     build:
       targets:
         HabitsAndChores: all
-    run:
-      config: Debug
     test:
+      targets:
+        - HabitsAndChoresTests
+      config: Debug
+    run:
       config: Debug
     profile:
       config: Release

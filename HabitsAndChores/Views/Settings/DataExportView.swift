@@ -101,7 +101,7 @@ private struct DataExport: Codable {
             reminderMinute = task.reminderMinute
             isArchived = task.isArchived
             createdAt = task.createdAt
-            completions = task.completions
+            completions = (task.completions ?? [])
                 .sorted { $0.scheduledDate < $1.scheduledDate }
                 .map { Completion(date: $0.scheduledDate, status: $0.status.rawValue) }
         }
