@@ -60,6 +60,13 @@ final class SocialAccount {
         self.displayName = displayName
     }
 
+    func updateDisplayName(_ name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        displayName = trimmed
+        defaults.set(trimmed, forKey: Key.displayName)
+    }
+
     func markLeft() {
         for key in [Key.joined, Key.userID, Key.handle, Key.displayName, Key.avatarConfig] {
             defaults.removeObject(forKey: key)

@@ -69,7 +69,7 @@ struct TemplateLibraryView: View {
     private func add(_ template: TaskTemplate) {
         let task = template.makeTaskItem()
         context.insert(task)
-        try? context.save()
+        context.saveOrReport()
         Task { await NotificationManager.shared.reschedule(for: task) }
     }
 }

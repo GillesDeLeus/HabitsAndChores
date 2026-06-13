@@ -6,8 +6,12 @@ import AuthenticationServices
 /// the create / leave flows. Everything here is inert until the user opts in.
 struct AccountSection: View {
     @Environment(SocialAccount.self) private var account
+    @Query(filter: #Predicate<TaskItem> { !$0.isArchived }) private var tasks: [TaskItem]
     @State private var showingCreate = false
     @State private var showingAvatar = false
+    @State private var confirmLeave = false
+    @State private var editingName = false
+    @State private var nameDraft = ""
     @State private var leaving = false
     @State private var errorMessage: String?
 
@@ -36,12 +40,24 @@ struct AccountSection: View {
                 } label: {
                     Label("Edit avatar", systemImage: "person.crop.circle.badge.photo")
                 }
-                Button(role: .destructive) {
-                    leave(userID: userID, handle: handle)
+                Button {
+                    nameDraft = account.displayName
+                    editingName = true
                 } label: {
-                    if leaving { ProgressView() } else { Text("Leave & delete profile") }
+                    Label("Edit display name", systemImage: "pencil")
+                }
+                Button(role: .destructive) {
+                    confirmLeave = true
+                } label: {
+                    if leaving { ProgressView() } else { Text("Delete account") }
                 }
                 .disabled(leaving)
+                .confirmationDialog("Delete your account?", isPresented: $confirmLeave, titleVisibility: .visible) {
+                    Button("Delete account", role: .destructive) { leave(userID: userID, handle: handle) }
+                    Button("Cancel", role: .cancel) {}
+                } message: {
+                    Text("This permanently deletes your public profile, handle, and friend connections. Your tasks and on-device data are not affected.")
+                }
             }
         } header: {
             Text("Account")
@@ -57,12 +73,34 @@ struct AccountSection: View {
         .alert("Account", isPresented: .constant(errorMessage != nil), presenting: errorMessage) { _ in
             Button("OK") { errorMessage = nil }
         } message: { Text($0) }
+        .alert("Display name", isPresented: $editingName) {
+            TextField("Display name", text: $nameDraft)
+            Button("Save") { saveName() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This is shown to your friends.")
+        }
+    }
+
+    private func saveName() {
+        let name = nameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty else { return }
+        guard ContentModeration.isAcceptable(name) else {
+            errorMessage = SocialError.objectionableContent.errorDescription
+            return
+        }
+        account.updateDisplayName(name)
+        Task { await ProfileSync.republish(account: account, tasks: tasks, service: service, force: true) }
     }
 
     private func leave(userID: String, handle: String) {
         leaving = true
         Task {
             await SocialPushManager.removeSubscription(for: userID)
+            // Remove my own friend edges so I leave no dangling connections.
+            if let mine = try? await service.edges(ownedBy: userID) {
+                for edge in mine { try? await service.removeEdge(owner: userID, other: edge.other) }
+            }
             try? await service.deleteAccount(userID: userID, handle: handle)
             account.markLeft()
             leaving = false
@@ -84,6 +122,7 @@ private struct CreateAccountSheet: View {
     @State private var pendingUserID = ""
     @State private var suggestedName = ""
     @State private var handleInput = ""
+    @State private var agreedToTerms = false
     @State private var busy = false
     @State private var errorMessage: String?
 
@@ -108,16 +147,29 @@ private struct CreateAccountSheet: View {
                         TextField("handle", text: $handleInput)
                             .textInputAutocapitalization(.never)
                             .autocorrectionDisabled()
+                    } header: {
+                        Text("Choose a handle")
+                    } footer: {
+                        Text("3–20 characters: letters, numbers, or underscore. This is how friends find you.")
+                    }
+
+                    Section {
+                        Toggle(isOn: $agreedToTerms) {
+                            Text("I agree to the Terms & Community Guidelines, and understand there is zero tolerance for objectionable content or abusive behavior.")
+                                .font(.footnote)
+                        }
+                        NavigationLink { TermsView() } label: {
+                            Label("Read the Terms", systemImage: "doc.text")
+                        }
+                    }
+
+                    Section {
                         Button {
                             createAccount()
                         } label: {
                             if busy { ProgressView() } else { Text("Create profile") }
                         }
-                        .disabled(busy || normalizedHandle(handleInput) == nil)
-                    } header: {
-                        Text("Choose a handle")
-                    } footer: {
-                        Text("3–20 characters: letters, numbers, or underscore. This is how friends find you.")
+                        .disabled(busy || !agreedToTerms || normalizedHandle(handleInput) == nil)
                     }
                 }
             }
@@ -154,6 +206,10 @@ private struct CreateAccountSheet: View {
     private func createAccount() {
         guard let handle = normalizedHandle(handleInput) else {
             errorMessage = SocialError.invalidHandle.errorDescription
+            return
+        }
+        guard ContentModeration.isAcceptable(handle), ContentModeration.isAcceptable(suggestedName) else {
+            errorMessage = SocialError.objectionableContent.errorDescription
             return
         }
         busy = true

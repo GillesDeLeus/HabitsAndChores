@@ -15,6 +15,7 @@ struct CloudKitSocialService: SocialService {
         static let profile = "Profile"
         static let handle = "Handle"
         static let edge = "FriendEdge"
+        static let report = "Report"
     }
 
     private func profileRecordID(_ userID: String) -> CKRecord.ID {
@@ -86,6 +87,16 @@ struct CloudKitSocialService: SocialService {
     func deleteAccount(userID: String, handle: String) async throws {
         _ = try? await database.deleteRecord(withID: profileRecordID(userID))
         _ = try? await database.deleteRecord(withID: handleRecordID(handle))
+    }
+
+    func report(reporterID: String, reportedID: String, reason: String) async throws {
+        let id = CKRecord.ID(recordName: "report_\(reporterID)_\(reportedID)_\(Int(Date.now.timeIntervalSince1970))")
+        let record = CKRecord(recordType: RecordType.report, recordID: id)
+        record["reporter"] = reporterID
+        record["reported"] = reportedID
+        record["reason"] = reason
+        record["createdAt"] = Date()
+        _ = try await database.save(record)
     }
 
     // MARK: - Friend graph

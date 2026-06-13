@@ -45,12 +45,18 @@ protocol SocialService {
 
     /// Fetches profiles for a set of user ids (missing ones are skipped).
     func profiles(userIDs: [String]) async throws -> [SharedProfile]
+
+    // MARK: - Safety
+
+    /// Files a report about another user for review.
+    func report(reporterID: String, reportedID: String, reason: String) async throws
 }
 
 enum SocialError: LocalizedError {
     case iCloudUnavailable
     case handleTaken
     case invalidHandle
+    case objectionableContent
 
     var errorDescription: String? {
         switch self {
@@ -60,6 +66,8 @@ enum SocialError: LocalizedError {
             return String(localized: "That handle is already taken. Try another.")
         case .invalidHandle:
             return String(localized: "Handles must be 3–20 characters: letters, numbers, or underscore.")
+        case .objectionableContent:
+            return String(localized: "Please choose a handle without offensive language.")
         }
     }
 }

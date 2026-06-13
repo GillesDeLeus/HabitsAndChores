@@ -1,8 +1,33 @@
 import Foundation
 import SwiftData
+import SwiftUI
 
-/// A one-off to-do, independent of the recurring habits/chores system. No
-/// scheduling, no streaks — just a thing to do once and check off.
+enum TodoPriority: Int, CaseIterable, Identifiable, Codable {
+    case none = 0, low, medium, high
+    var id: Int { rawValue }
+
+    var label: String {
+        switch self {
+        case .none:   return String(localized: "None")
+        case .low:    return String(localized: "Low")
+        case .medium: return String(localized: "Medium")
+        case .high:   return String(localized: "High")
+        }
+    }
+
+    /// Flag tint; `.none` has no visible flag.
+    var color: Color {
+        switch self {
+        case .none:   return .clear
+        case .low:    return .blue
+        case .medium: return .orange
+        case .high:   return .red
+        }
+    }
+}
+
+/// A one-off to-do, independent of the recurring habits/chores system. Supports a
+/// due date, an optional reminder, a priority, and manual ordering.
 @Model
 final class TodoItem {
     var id: UUID = UUID()
@@ -10,13 +35,31 @@ final class TodoItem {
     var isDone: Bool = false
     var createdAt: Date = Date.now
     var completedAt: Date?
+    var dueDate: Date?
+    var reminderDate: Date?
+    var priorityRaw: Int = 0
+    /// User-controlled manual ordering (lower = higher in the list).
+    var sortIndex: Int = 0
 
-    init(title: String) {
+    init(title: String, sortIndex: Int? = nil) {
         self.id = UUID()
         self.title = title
         self.isDone = false
         self.createdAt = .now
         self.completedAt = nil
+        self.sortIndex = sortIndex ?? Int(Date.now.timeIntervalSince1970)
+    }
+
+    var priority: TodoPriority {
+        get { TodoPriority(rawValue: priorityRaw) ?? .none }
+        set { priorityRaw = newValue.rawValue }
+    }
+
+    var hasReminder: Bool { reminderDate != nil }
+
+    var isOverdue: Bool {
+        guard !isDone, let dueDate else { return false }
+        return dueDate < .now
     }
 
     func toggle() {

@@ -63,6 +63,8 @@ final class TaskItem {
     var isArchived: Bool
     var createdFromTemplateID: String?
     var createdAt: Date
+    /// User-controlled manual ordering (lower = higher in the list).
+    var sortIndex: Int = 0
 
     @Relationship(deleteRule: .cascade, inverse: \Completion.task)
     var completions: [Completion] = []
@@ -80,7 +82,8 @@ final class TaskItem {
         reminderHour: Int? = nil,
         reminderMinute: Int? = nil,
         isArchived: Bool = false,
-        createdFromTemplateID: String? = nil
+        createdFromTemplateID: String? = nil,
+        sortIndex: Int? = nil
     ) {
         self.id = id
         self.title = title
@@ -96,6 +99,8 @@ final class TaskItem {
         self.isArchived = isArchived
         self.createdFromTemplateID = createdFromTemplateID
         self.createdAt = .now
+        // Default to a monotonically increasing value so new tasks append in order.
+        self.sortIndex = sortIndex ?? Int(Date.now.timeIntervalSince1970)
     }
 
     // MARK: - Derived

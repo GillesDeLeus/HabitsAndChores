@@ -61,6 +61,28 @@ final class NotificationManager {
         }
     }
 
+    // MARK: - To-dos
+
+    /// Schedules (or clears) a one-shot reminder for a to-do.
+    func reschedule(todo: TodoItem) async {
+        cancelTodo(id: todo.id)
+        guard !todo.isDone, let date = todo.reminderDate, date > .now else { return }
+
+        let content = UNMutableNotificationContent()
+        content.title = String(localized: "To-Do")
+        content.body = todo.title
+        content.sound = .default
+
+        let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+        let request = UNNotificationRequest(identifier: "todo-\(todo.id.uuidString)", content: content, trigger: trigger)
+        try? await center.add(request)
+    }
+
+    func cancelTodo(id: UUID) {
+        center.removePendingNotificationRequests(withIdentifiers: ["todo-\(id.uuidString)"])
+    }
+
     func cancel(taskID: UUID) {
         center.getPendingNotificationRequests { requests in
             let ids = requests.map(\.identifier).filter { $0.hasPrefix(taskID.uuidString) }

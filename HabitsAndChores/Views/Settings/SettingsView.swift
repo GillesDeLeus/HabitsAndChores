@@ -44,6 +44,11 @@ struct SettingsView: View {
                     Link(destination: URL(string: "https://www.apple.com/icloud/")!) {
                         Label("iCloud sync is automatic", systemImage: "icloud.fill")
                     }
+                    NavigationLink {
+                        DataExportView()
+                    } label: {
+                        Label("Export my data", systemImage: "square.and.arrow.up")
+                    }
                 }
 
                 Section(header: Text("Legal")) {
@@ -51,6 +56,11 @@ struct SettingsView: View {
                         PrivacyPolicyView()
                     } label: {
                         Label("Privacy Policy", systemImage: "hand.raised.fill")
+                    }
+                    NavigationLink {
+                        TermsView()
+                    } label: {
+                        Label("Terms & Community Guidelines", systemImage: "doc.text.fill")
                     }
                     LabeledContent("License", value: "MIT")
                 }

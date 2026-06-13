@@ -121,6 +121,18 @@ final class FriendsModel {
         await mutate { try await service.removeEdge(owner: me, other: profile.userID) }
     }
 
+    /// Block a user: mark my edge to them as blocked. They are dropped from
+    /// friends/requests/suggestions and hidden from my lists.
+    func block(_ profile: SharedProfile) async {
+        await mutate { try await service.upsertEdge(owner: me, other: profile.userID, state: .blocked) }
+    }
+
+    /// File a report about a user (does not modify the friendship by itself).
+    func report(_ profile: SharedProfile, reason: String) async {
+        do { try await service.report(reporterID: me, reportedID: profile.userID, reason: reason) }
+        catch { self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+    }
+
     private func mutate(_ work: () async throws -> Void) async {
         do {
             try await work()
