@@ -124,9 +124,13 @@ private struct ChoreRow: View {
                             .strikethrough(chore.isDone, color: .secondary)
                             .foregroundStyle(chore.isDone ? .secondary : .primary)
                         HStack(spacing: 6) {
-                            Text(chore.frequency.localizedDescription)
-                            if let assignee = chore.assignee {
-                                Text("· \(assignee)")
+                            if chore.isDone, let by = chore.completedBy {
+                                Text("Done by \(by)")
+                            } else {
+                                Text(chore.frequency.localizedDescription)
+                                if let assignee = chore.assignee {
+                                    Text("· \(assignee)")
+                                }
                             }
                         }
                         .font(.caption2).foregroundStyle(.secondary)

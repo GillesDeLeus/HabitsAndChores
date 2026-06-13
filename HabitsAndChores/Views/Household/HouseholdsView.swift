@@ -52,7 +52,7 @@ final class HouseholdsModel {
         let temp = SharedChore(id: "temp-\(UUID().uuidString)", title: draft.title, details: draft.details,
                                kindRaw: draft.kind.rawValue, categoryRaw: draft.category.rawValue,
                                frequency: draft.frequency, symbolName: draft.symbolName,
-                               colorHue: draft.colorHue, assignee: draft.assignee, isDone: false)
+                               colorHue: draft.colorHue, assignee: draft.assignee, isDone: false, completedBy: nil)
         applyLocal(household.id) { $0.append(temp); $0.sort { $0.title < $1.title } }
         persist { try await self.service.addChore(to: household, draft: draft) }
     }
@@ -70,11 +70,18 @@ final class HouseholdsModel {
     }
 
     func setDone(_ chore: SharedChore, in household: Household, _ done: Bool) {
+        let occurrence = HouseholdService.currentOccurrence(for: chore.frequency)
+        let by = meDisplayName.isEmpty ? String(localized: "Someone") : meDisplayName
         applyLocal(household.id) { chores in
-            if let i = chores.firstIndex(where: { $0.id == chore.id }) { chores[i].isDone = done }
+            if let i = chores.firstIndex(where: { $0.id == chore.id }) {
+                chores[i].isDone = done
+                chores[i].completedBy = done ? by : nil
+            }
         }
-        persist { try await self.service.setDone(chore, in: household, done: done) }
+        persist { try await self.service.setCompletion(chore, done: done, occurrence: occurrence, by: by, in: household) }
     }
+
+    func registerSubscriptions() async { await service.registerSubscriptions() }
 
     func assign(_ chore: SharedChore, to member: String?, in household: Household) {
         applyLocal(household.id) { chores in
@@ -181,6 +188,7 @@ struct HouseholdsView: View {
         .task {
             model.meRecordName = account.cloudUserRecordName
             model.meDisplayName = account.displayName
+            await model.registerSubscriptions()
             await model.reload()
         }
         .onReceive(NotificationCenter.default.publisher(for: .householdsChanged)) { _ in

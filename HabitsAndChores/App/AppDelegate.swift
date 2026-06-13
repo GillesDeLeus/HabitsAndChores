@@ -14,10 +14,11 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         return true
     }
 
-    /// A friend-graph subscription fired. Tell open views to reload.
+    /// A CloudKit subscription fired (friend graph or household). Tell open views to reload.
     func application(_ application: UIApplication,
                      didReceiveRemoteNotification userInfo: [AnyHashable: Any]) async -> UIBackgroundFetchResult {
         NotificationCenter.default.post(name: .friendGraphChanged, object: nil)
+        NotificationCenter.default.post(name: .householdsChanged, object: nil)
         return .newData
     }
 

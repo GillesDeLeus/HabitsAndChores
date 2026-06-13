@@ -33,7 +33,8 @@ struct SharedChore: Identifiable {
     var symbolName: String
     var colorHue: Double
     var assignee: String?           // member display name, or nil = unassigned
-    var isDone: Bool
+    var isDone: Bool                // completed for the current occurrence
+    var completedBy: String?        // who completed the current occurrence
 
     var kind: TaskKind { TaskKind(rawValue: kindRaw) ?? .chore }
     var category: TaskCategory { TaskCategory(rawValue: categoryRaw) ?? .other }
@@ -94,10 +95,69 @@ struct HouseholdService {
     private enum RecordType {
         static let household = "Household"
         static let chore = "SharedChore"
+        static let completion = "SharedCompletion"
+    }
+
+    /// Start-of-day of the chore's current scheduled occurrence, used to key
+    /// per-occurrence completion (so a weekly chore stays done until next week).
+    static func currentOccurrence(for frequency: FrequencyRule, asOf now: Date = .now,
+                                  calendar cal: Calendar = .current) -> Date {
+        let today = cal.startOfDay(for: now)
+        switch frequency.kind {
+        case .daily, .everyN:
+            return today
+        case .weekly:
+            let weekdays = Set(frequency.weekdays)
+            guard !weekdays.isEmpty else { return today }
+            for delta in 0..<7 {
+                if let day = cal.date(byAdding: .day, value: -delta, to: today),
+                   weekdays.contains(cal.component(.weekday, from: day)) {
+                    return day
+                }
+            }
+            return today
+        case .monthly:
+            let target = frequency.dayOfMonth ?? 1
+            func occurrence(inMonthOf date: Date) -> Date? {
+                guard let range = cal.range(of: .day, in: .month, for: date) else { return nil }
+                var comps = cal.dateComponents([.year, .month], from: date)
+                comps.day = min(target, range.count)
+                return cal.date(from: comps).map { cal.startOfDay(for: $0) }
+            }
+            if let thisMonth = occurrence(inMonthOf: today), thisMonth <= today { return thisMonth }
+            if let prev = cal.date(byAdding: .month, value: -1, to: today),
+               let prevOcc = occurrence(inMonthOf: prev) { return prevOcc }
+            return today
+        }
     }
 
     func isAvailable() async -> Bool {
         (try? await container.accountStatus()) == .available
+    }
+
+    /// Subscribes to the private + shared databases so members get a push (and the
+    /// list refreshes) when anyone changes a household or chore. Saved once.
+    func registerSubscriptions() async {
+        let defaults = UserDefaults.standard
+        let key = "household.subscribed"
+        guard !defaults.bool(forKey: key) else { return }
+        var allOK = true
+        for (scope, id) in [(CKDatabase.Scope.private, "household-private"),
+                            (CKDatabase.Scope.shared, "household-shared")] {
+            let subscription = CKDatabaseSubscription(subscriptionID: id)
+            let info = CKSubscription.NotificationInfo()
+            info.shouldSendContentAvailable = true
+            subscription.notificationInfo = info
+            do {
+                _ = try await database(scope).save(subscription)
+            } catch let error as CKError where error.code == .serverRejectedRequest {
+                // Already exists — fine.
+            } catch {
+                allOK = false
+                Logger.cloudkit.error("household subscription failed: \(error.localizedDescription, privacy: .public)")
+            }
+        }
+        if allOK { defaults.set(true, forKey: key) }
     }
 
     // MARK: Create
@@ -142,11 +202,24 @@ struct HouseholdService {
                                 currentUserDisplayName: currentUserDisplayName)
                 } ?? []
 
+                // Group completion records by the chore they belong to.
+                let cal = Calendar.current
+                var completionsByChore: [String: [CKRecord]] = [:]
+                for rec in records where rec.recordType == RecordType.completion {
+                    if let choreID = rec["choreID"] as? String {
+                        completionsByChore[choreID, default: []].append(rec)
+                    }
+                }
+
                 let chores = records
                     .filter { $0.recordType == RecordType.chore }
                     .map { rec -> SharedChore in
                         let frequency = (rec["frequency"] as? Data)
                             .flatMap { try? JSONDecoder().decode(FrequencyRule.self, from: $0) } ?? .daily
+                        let occurrence = Self.currentOccurrence(for: frequency, calendar: cal)
+                        let match = completionsByChore[rec.recordID.recordName]?.first {
+                            ($0["date"] as? Date).map { cal.startOfDay(for: $0) } == occurrence
+                        }
                         return SharedChore(
                             id: rec.recordID.recordName,
                             title: rec["title"] as? String ?? "",
@@ -157,7 +230,8 @@ struct HouseholdService {
                             symbolName: rec["symbol"] as? String ?? "checklist",
                             colorHue: rec["colorHue"] as? Double ?? 0.58,
                             assignee: rec["assignee"] as? String,
-                            isDone: (rec["isDone"] as? Int ?? 0) == 1)
+                            isDone: match != nil,
+                            completedBy: match?["completedBy"] as? String)
                     }
                     .sorted { $0.title < $1.title }
 
@@ -175,7 +249,6 @@ struct HouseholdService {
         let db = database(household.scope)
         let record = CKRecord(recordType: RecordType.chore,
                               recordID: CKRecord.ID(recordName: UUID().uuidString, zoneID: household.zoneID))
-        record["isDone"] = 0
         // Parent link so the chore is shared together with the household root.
         let rootID = CKRecord.ID(recordName: household.id, zoneID: household.zoneID)
         record.parent = CKRecord.Reference(recordID: rootID, action: .none)
@@ -199,8 +272,32 @@ struct HouseholdService {
         record["frequency"] = try? JSONEncoder().encode(draft.frequency)
     }
 
-    func setDone(_ chore: SharedChore, in household: Household, done: Bool) async throws {
-        try await update(chore, in: household) { $0["isDone"] = done ? 1 : 0 }
+    /// Marks/unmarks a chore done for its current occurrence by writing/removing a
+    /// `SharedCompletion` record (recording who completed it).
+    func setCompletion(_ chore: SharedChore, done: Bool, occurrence: Date, by: String,
+                       in household: Household) async throws {
+        let db = database(household.scope)
+        let choreRecordID = CKRecord.ID(recordName: chore.id, zoneID: household.zoneID)
+        if done {
+            let record = CKRecord(recordType: RecordType.completion,
+                                  recordID: CKRecord.ID(recordName: UUID().uuidString, zoneID: household.zoneID))
+            record["choreID"] = chore.id
+            record["date"] = occurrence
+            record["completedBy"] = by
+            record.parent = CKRecord.Reference(recordID: choreRecordID, action: .none)
+            record["chore"] = CKRecord.Reference(recordID: choreRecordID, action: .deleteSelf)
+            _ = try await db.save(record)
+        } else {
+            // Remove any completion for this chore at the current occurrence.
+            let cal = Calendar.current
+            let all = (try? await allRecords(in: household.zoneID, db: db)) ?? []
+            let targets = all.filter {
+                $0.recordType == RecordType.completion
+                && $0["choreID"] as? String == chore.id
+                && ($0["date"] as? Date).map { cal.startOfDay(for: $0) } == occurrence
+            }
+            for target in targets { _ = try? await db.deleteRecord(withID: target.recordID) }
+        }
     }
 
     func assign(_ chore: SharedChore, to member: String?, in household: Household) async throws {
