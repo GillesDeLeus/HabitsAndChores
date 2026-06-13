@@ -65,6 +65,11 @@ final class SocialAccount {
         self.cloudUserRecordName = cloudUserRecordName
     }
 
+    func updateCloudUserRecordName(_ name: String) {
+        cloudUserRecordName = name
+        defaults.set(name, forKey: Key.cloudUserRecordName)
+    }
+
     func updateDisplayName(_ name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }

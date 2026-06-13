@@ -1,5 +1,6 @@
 import Foundation
 import OSLog
+import CloudKit
 
 /// Keeps the public profile reasonably fresh by re-publishing the derived summary
 /// (level, points, streaks, badge tiers) when the app becomes active or
@@ -12,7 +13,16 @@ enum ProfileSync {
     static func republish(account: SocialAccount, tasks: [TaskItem],
                           service: SocialService, force: Bool = false) async {
         guard account.isJoined, let me = account.userID, let handle = account.handle else { return }
-        if !force, Date.now.timeIntervalSince(lastPublish) < minInterval { return }
+        // Accounts created before cloudUserRecordName existed need a one-time backfill
+        // (and a publish) so friends can add them to households.
+        let needsBackfill = account.cloudUserRecordName == nil
+        if !force, !needsBackfill, Date.now.timeIntervalSince(lastPublish) < minInterval { return }
+
+        if needsBackfill,
+           let recordName = try? await CKContainer(identifier: CloudKitSocialService.containerID)
+               .userRecordID().recordName {
+            account.updateCloudUserRecordName(recordName)
+        }
 
         let summary = GamificationEngine.summary(for: tasks)
         let profile = SharedProfile(

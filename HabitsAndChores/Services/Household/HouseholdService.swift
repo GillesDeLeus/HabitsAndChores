@@ -150,6 +150,12 @@ struct HouseholdService {
         _ = try await database(household.scope).deleteRecord(withID: id)
     }
 
+    /// Deletes a household. The owner deletes the whole zone (removing it for
+    /// everyone); a participant deletes their copy of the shared zone (leaving it).
+    func deleteHousehold(_ household: Household) async throws {
+        _ = try await database(household.scope).deleteRecordZone(withID: household.zoneID)
+    }
+
     /// Adds an existing app friend (by their CloudKit user record name) to a
     /// household as a read-write member, without a manual invite link. The invitee
     /// must still accept per CloudKit's rules. Owner only.

@@ -35,6 +35,7 @@ final class HouseholdsModel {
         }
     }
 
+    func delete(_ household: Household) async { await run { try await service.deleteHousehold(household) } }
     func addChore(to household: Household, title: String) async { await run { try await service.addChore(to: household, title: title) } }
     func setDone(_ chore: SharedChore, in household: Household, _ done: Bool) async { await run { try await service.setDone(chore, in: household, done: done) } }
     func assign(_ chore: SharedChore, to member: String?, in household: Household) async { await run { try await service.assign(chore, to: member, in: household) } }
@@ -93,6 +94,10 @@ struct HouseholdsView: View {
                             .font(.caption).foregroundStyle(.secondary)
                     }
                 }
+            }
+            .onDelete { offsets in
+                let targets = offsets.map { model.households[$0] }
+                Task { for household in targets { await model.delete(household) } }
             }
             if let error = model.error {
                 Section { Text(error).font(.caption).foregroundStyle(.secondary) }
