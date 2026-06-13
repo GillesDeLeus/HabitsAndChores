@@ -11,13 +11,18 @@ final class HouseholdsModel {
     var available = true
     var error: String?
 
+    /// Current user identity, so the owner shows their display name (not "Owner").
+    var meRecordName: String?
+    var meDisplayName: String = ""
+
     func reload() async {
         loading = true
         defer { loading = false }
         available = await service.isAvailable()
         guard available else { households = []; return }
         do {
-            households = try await service.households()
+            households = try await service.households(currentUserRecordName: meRecordName,
+                                                      currentUserDisplayName: meDisplayName)
             error = nil
         } catch {
             self.error = error.localizedDescription
@@ -115,7 +120,10 @@ final class HouseholdsModel {
 
     private func refreshQuietly() async {
         guard await service.isAvailable() else { return }
-        if let fresh = try? await service.households() { households = fresh }
+        if let fresh = try? await service.households(currentUserRecordName: meRecordName,
+                                                     currentUserDisplayName: meDisplayName) {
+            households = fresh
+        }
     }
 }
 
@@ -126,6 +134,7 @@ struct SharePresentation: Identifiable {
 }
 
 struct HouseholdsView: View {
+    @Environment(SocialAccount.self) private var account
     @State private var model = HouseholdsModel()
     @State private var creating = false
     @State private var newName = ""
@@ -169,7 +178,11 @@ struct HouseholdsView: View {
         }
         .overlay { if model.loading && model.households.isEmpty { ProgressView() } }
         .refreshable { await model.reload() }
-        .task { await model.reload() }
+        .task {
+            model.meRecordName = account.cloudUserRecordName
+            model.meDisplayName = account.displayName
+            await model.reload()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .householdsChanged)) { _ in
             Task { await model.reload() }
         }

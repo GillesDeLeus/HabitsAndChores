@@ -126,7 +126,7 @@ struct HouseholdService {
 
     // MARK: Fetch
 
-    func households() async throws -> [Household] {
+    func households(currentUserRecordName: String? = nil, currentUserDisplayName: String = "") async throws -> [Household] {
         var result: [Household] = []
         for scope in [CKDatabase.Scope.private, .shared] {
             let db = database(scope)
@@ -137,7 +137,10 @@ struct HouseholdService {
                 let name = root["name"] as? String ?? "Household"
 
                 let share = records.compactMap { $0 as? CKShare }.first
-                let members = share.map { memberNames(of: $0) } ?? []
+                let members = share.map {
+                    memberNames(of: $0, currentUserRecordName: currentUserRecordName,
+                                currentUserDisplayName: currentUserDisplayName)
+                } ?? []
 
                 let chores = records
                     .filter { $0.recordType == RecordType.chore }
@@ -300,14 +303,21 @@ struct HouseholdService {
         }
     }
 
-    private func memberNames(of share: CKShare) -> [String] {
+    private func memberNames(of share: CKShare, currentUserRecordName: String?,
+                             currentUserDisplayName: String) -> [String] {
         let formatter = PersonNameComponentsFormatter()
-        return share.participants.compactMap { participant in
+        return share.participants.map { participant in
+            // CloudKit name, when the participant has shared it.
             if let components = participant.userIdentity.nameComponents {
                 let name = formatter.string(from: components)
                 if !name.isEmpty { return name }
             }
-            return participant.role == .owner ? String(localized: "Owner") : nil
+            // The current user's own entry (incl. the owner) — use their app display name.
+            if let recordName = participant.userIdentity.userRecordID?.recordName,
+               recordName == currentUserRecordName, !currentUserDisplayName.isEmpty {
+                return currentUserDisplayName
+            }
+            return participant.role == .owner ? String(localized: "Owner") : String(localized: "Member")
         }
     }
 }
