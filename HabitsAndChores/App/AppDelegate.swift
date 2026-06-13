@@ -26,21 +26,35 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
         Logger.cloudkit.error("remote notification registration failed: \(error.localizedDescription, privacy: .public)")
     }
 
-    /// Accepts a household share when the user opens an invitation link.
+    // SwiftUI apps deliver CloudKit share acceptance to the *scene* delegate, so
+    // route new scenes through SceneDelegate (which handles the accept).
     func application(_ application: UIApplication,
-                     userDidAcceptCloudKitShareWith metadata: CKShare.Metadata) {
-        let container = CKContainer(identifier: HouseholdService.containerID)
-        container.accept(metadata) { _, error in
-            if let error {
-                Logger.cloudkit.error("failed to accept share: \(error.localizedDescription, privacy: .public)")
-            }
-            Task { @MainActor in NotificationCenter.default.post(name: .householdsChanged, object: nil) }
-        }
+                     configurationForConnecting connectingSceneSession: UISceneSession,
+                     options: UIScene.ConnectionOptions) -> UISceneConfiguration {
+        let configuration = UISceneConfiguration(name: nil, sessionRole: connectingSceneSession.role)
+        configuration.delegateClass = SceneDelegate.self
+        return configuration
     }
 
     // Show the banner even when the app is in the foreground.
     func userNotificationCenter(_ center: UNUserNotificationCenter,
                                 willPresent notification: UNNotification) async -> UNNotificationPresentationOptions {
         [.banner, .sound]
+    }
+}
+
+/// Accepts CloudKit household share invitations. SwiftUI manages the window; this
+/// only adds scene-level share handling.
+final class SceneDelegate: NSObject, UIWindowSceneDelegate {
+    func windowScene(_ windowScene: UIWindowScene,
+                     userDidAcceptCloudKitShareWith cloudKitShareMetadata: CKShare.Metadata) {
+        let operation = CKAcceptSharesOperation(shareMetadatas: [cloudKitShareMetadata])
+        operation.acceptSharesResultBlock = { result in
+            if case .failure(let error) = result {
+                Logger.cloudkit.error("accept share failed: \(error.localizedDescription, privacy: .public)")
+            }
+            Task { @MainActor in NotificationCenter.default.post(name: .householdsChanged, object: nil) }
+        }
+        CKContainer(identifier: HouseholdService.containerID).add(operation)
     }
 }

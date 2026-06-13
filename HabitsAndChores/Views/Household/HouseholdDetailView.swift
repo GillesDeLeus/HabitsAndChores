@@ -8,6 +8,7 @@ struct HouseholdDetailView: View {
     @State private var newChore = ""
     @State private var sharePresentation: SharePresentation?
     @State private var showAddFriends = false
+    @State private var inviteAfterAdd = false
 
     private var household: Household? {
         model.households.first { $0.id == householdID }
@@ -68,10 +69,14 @@ struct HouseholdDetailView: View {
         .navigationTitle(household.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { ToolbarItem(placement: .topBarTrailing) { EditButton() } }
-        .sheet(isPresented: $showAddFriends) {
-            AddFriendsToHouseholdView { friend in
+        .sheet(isPresented: $showAddFriends, onDismiss: {
+            if inviteAfterAdd { inviteAfterAdd = false; invite(household) }
+        }) {
+            AddFriendsToHouseholdView(onAdd: { friend in
                 await model.addFriend(friend, to: household)
-            }
+            }, onAdded: {
+                inviteAfterAdd = true
+            })
         }
     }
 

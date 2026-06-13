@@ -8,6 +8,8 @@ struct AddFriendsToHouseholdView: View {
 
     /// Returns an error message, or nil on success.
     let onAdd: (SharedProfile) async -> String?
+    /// Called after a successful add (so the caller can deliver the invite link).
+    var onAdded: () -> Void = {}
 
     @State private var model: FriendsModel?
     @State private var addingID: String?
@@ -61,7 +63,7 @@ struct AddFriendsToHouseholdView: View {
         Task {
             let error = await onAdd(friend)
             addingID = nil
-            if let error { message = error } else { dismiss() }
+            if let error { message = error } else { onAdded(); dismiss() }
         }
     }
 }
