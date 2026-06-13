@@ -97,22 +97,22 @@ struct HouseholdService {
             let db = database(scope)
             guard let zones = try? await db.allRecordZones() else { continue }
             for zone in zones where zone.zoneID.zoneName.hasPrefix(Self.zonePrefix) {
-                guard let root = try? await firstRecord(of: RecordType.household, in: zone.zoneID, db: db) else { continue }
+                guard let records = try? await allRecords(in: zone.zoneID, db: db),
+                      let root = records.first(where: { $0.recordType == RecordType.household }) else { continue }
                 let name = root["name"] as? String ?? "Household"
 
-                var members: [String] = []
-                if let shareRef = root.share,
-                   let share = try? await db.record(for: shareRef.recordID) as? CKShare {
-                    members = memberNames(of: share)
-                }
+                let share = records.compactMap { $0 as? CKShare }.first
+                let members = share.map { memberNames(of: $0) } ?? []
 
-                let choreRecords = (try? await records(of: RecordType.chore, in: zone.zoneID, db: db)) ?? []
-                let chores = choreRecords.map { rec in
-                    SharedChore(id: rec.recordID.recordName,
-                                title: rec["title"] as? String ?? "",
-                                isDone: (rec["isDone"] as? Int ?? 0) == 1,
-                                assignee: rec["assignee"] as? String)
-                }.sorted { $0.title < $1.title }
+                let chores = records
+                    .filter { $0.recordType == RecordType.chore }
+                    .map { rec in
+                        SharedChore(id: rec.recordID.recordName,
+                                    title: rec["title"] as? String ?? "",
+                                    isDone: (rec["isDone"] as? Int ?? 0) == 1,
+                                    assignee: rec["assignee"] as? String)
+                    }
+                    .sorted { $0.title < $1.title }
 
                 result.append(Household(id: root.recordID.recordName, name: name,
                                         zoneID: zone.zoneID, scope: scope,
@@ -213,14 +213,26 @@ struct HouseholdService {
         _ = try await db.save(record)
     }
 
-    private func firstRecord(of type: String, in zoneID: CKRecordZone.ID, db: CKDatabase) async throws -> CKRecord? {
-        try await records(of: type, in: zoneID, db: db).first
-    }
-
-    private func records(of type: String, in zoneID: CKRecordZone.ID, db: CKDatabase) async throws -> [CKRecord] {
-        let query = CKQuery(recordType: type, predicate: NSPredicate(value: true))
-        let (matches, _) = try await db.records(matching: query, inZoneWith: zoneID)
-        return matches.compactMap { try? $0.1.get() }
+    /// Fetches every record in a zone via zone changes — works in custom/shared
+    /// zones without the queryable indexes that `CKQuery` would require.
+    private func allRecords(in zoneID: CKRecordZone.ID, db: CKDatabase) async throws -> [CKRecord] {
+        try await withCheckedThrowingContinuation { continuation in
+            var records: [CKRecord] = []
+            let config = CKFetchRecordZoneChangesOperation.ZoneConfiguration()
+            let operation = CKFetchRecordZoneChangesOperation(
+                recordZoneIDs: [zoneID],
+                configurationsByRecordZoneID: [zoneID: config])
+            operation.recordWasChangedBlock = { _, result in
+                if case .success(let record) = result { records.append(record) }
+            }
+            operation.fetchRecordZoneChangesResultBlock = { result in
+                switch result {
+                case .success: continuation.resume(returning: records)
+                case .failure(let error): continuation.resume(throwing: error)
+                }
+            }
+            db.add(operation)
+        }
     }
 
     private func memberNames(of share: CKShare) -> [String] {

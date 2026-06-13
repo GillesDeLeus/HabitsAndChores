@@ -72,7 +72,6 @@ struct HouseholdsView: View {
     @State private var model = HouseholdsModel()
     @State private var creating = false
     @State private var newName = ""
-    @State private var sharePresentation: SharePresentation?
 
     var body: some View {
         List {
@@ -118,10 +117,7 @@ struct HouseholdsView: View {
             Button("Create") { create() }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("e.g. “Home” or “Flat 3B”. You can invite people next.")
-        }
-        .sheet(item: $sharePresentation) { presentation in
-            HouseholdShareSheet(share: presentation.share, container: presentation.container)
+            Text("e.g. “Home” or “Flat 3B”. Open it to add friends or invite by link.")
         }
     }
 
@@ -129,11 +125,6 @@ struct HouseholdsView: View {
         let name = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !name.isEmpty else { return }
         newName = ""
-        Task {
-            if let share = await model.create(name: name) {
-                sharePresentation = SharePresentation(
-                    share: share, container: CKContainer(identifier: HouseholdService.containerID))
-            }
-        }
+        Task { _ = await model.create(name: name) }
     }
 }
