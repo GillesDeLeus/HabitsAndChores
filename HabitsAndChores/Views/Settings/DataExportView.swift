@@ -109,21 +109,25 @@ private struct DataExport: Codable {
 
     struct TodoRecord: Codable {
         let title: String
+        let details: String
         let isDone: Bool
         let createdAt: Date
         let completedAt: Date?
         let dueDate: Date?
         let reminderDate: Date?
         let priority: String
+        let category: String?
 
         init(_ todo: TodoItem) {
             title = todo.title
+            details = todo.details
             isDone = todo.isDone
             createdAt = todo.createdAt
             completedAt = todo.completedAt
             dueDate = todo.dueDate
             reminderDate = todo.reminderDate
             priority = todo.priority.label
+            category = todo.category?.localizedName
         }
     }
 }

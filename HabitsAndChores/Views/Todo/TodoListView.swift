@@ -16,7 +16,20 @@ struct TodoListView: View {
         }
     }
 
+    enum SortMode: String, CaseIterable, Identifiable {
+        case manual, dueDate, priority
+        var id: String { rawValue }
+        var label: String {
+            switch self {
+            case .manual:   return String(localized: "Manual order")
+            case .dueDate:  return String(localized: "Due date")
+            case .priority: return String(localized: "Priority")
+            }
+        }
+    }
+
     @State private var filter: Filter = .open
+    @State private var sortMode: SortMode = .manual
     @State private var newTitle = ""
     @State private var editing: TodoItem?
 
@@ -24,8 +37,21 @@ struct TodoListView: View {
     @Query(sort: \TodoItem.sortIndex, order: .forward)
     private var todos: [TodoItem]
 
-    private var open: [TodoItem] { todos.filter { !$0.isDone } }
-    private var done: [TodoItem] { todos.filter { $0.isDone } }
+    private var open: [TodoItem] { sorted(todos.filter { !$0.isDone }) }
+    private var done: [TodoItem] { sorted(todos.filter { $0.isDone }) }
+
+    private func sorted(_ list: [TodoItem]) -> [TodoItem] {
+        switch sortMode {
+        case .manual:
+            return list   // already in sortIndex order from the query
+        case .dueDate:
+            return list.sorted { ($0.dueDate ?? .distantFuture) < ($1.dueDate ?? .distantFuture) }
+        case .priority:
+            return list.sorted {
+                $0.priorityRaw != $1.priorityRaw ? $0.priorityRaw > $1.priorityRaw : $0.sortIndex < $1.sortIndex
+            }
+        }
+    }
 
     var body: some View {
         List {
@@ -55,7 +81,7 @@ struct TodoListView: View {
                         ForEach(open) { todo in
                             TodoRow(todo: todo) { toggle(todo) } edit: { editing = todo }
                         }
-                        .onMove(perform: moveOpen)
+                        .onMove(perform: sortMode == .manual ? moveOpen : nil)
                         .onDelete { deleteRows(open, $0) }
                     }
                 }
@@ -77,6 +103,16 @@ struct TodoListView: View {
             }
         }
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    Picker("Sort", selection: $sortMode) {
+                        ForEach(SortMode.allCases) { Text($0.label).tag($0) }
+                    }
+                } label: {
+                    Image(systemName: "arrow.up.arrow.down")
+                }
+                .accessibilityLabel("Sort to-dos")
+            }
             ToolbarItem(placement: .topBarTrailing) { EditButton() }
         }
         .sheet(item: $editing) { TodoEditView(todo: $0) }
@@ -141,13 +177,22 @@ private struct TodoRow: View {
                         Text(todo.title)
                             .strikethrough(todo.isDone, color: .secondary)
                             .foregroundStyle(todo.isDone ? .secondary : .primary)
-                        if let due = todo.dueDate {
-                            Label(due.formatted(.dateTime.month().day()), systemImage: todo.hasReminder ? "bell.fill" : "calendar")
-                                .font(.caption2)
-                                .foregroundStyle(todo.isOverdue ? .red : .secondary)
-                        } else if todo.hasReminder {
-                            Image(systemName: "bell.fill").font(.caption2).foregroundStyle(.secondary)
+                        HStack(spacing: 8) {
+                            if let due = todo.dueDate {
+                                Label(due.formatted(.dateTime.month().day()), systemImage: todo.hasReminder ? "bell.fill" : "calendar")
+                                    .foregroundStyle(todo.isOverdue ? .red : .secondary)
+                            } else if todo.hasReminder {
+                                Image(systemName: "bell.fill")
+                            }
+                            if let category = todo.category {
+                                Label(category.localizedName, systemImage: category.symbolName)
+                            }
+                            if !todo.details.isEmpty {
+                                Image(systemName: "text.alignleft")
+                            }
                         }
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
                     }
                     Spacer()
                 }

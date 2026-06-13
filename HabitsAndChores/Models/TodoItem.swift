@@ -32,12 +32,14 @@ enum TodoPriority: Int, CaseIterable, Identifiable, Codable {
 final class TodoItem {
     var id: UUID = UUID()
     var title: String = ""
+    var details: String = ""
     var isDone: Bool = false
     var createdAt: Date = Date.now
     var completedAt: Date?
     var dueDate: Date?
     var reminderDate: Date?
     var priorityRaw: Int = 0
+    var categoryRaw: String = ""    // empty = no category
     /// User-controlled manual ordering (lower = higher in the list).
     var sortIndex: Int = 0
 
@@ -53,6 +55,11 @@ final class TodoItem {
     var priority: TodoPriority {
         get { TodoPriority(rawValue: priorityRaw) ?? .none }
         set { priorityRaw = newValue.rawValue }
+    }
+
+    var category: TaskCategory? {
+        get { categoryRaw.isEmpty ? nil : TaskCategory(rawValue: categoryRaw) }
+        set { categoryRaw = newValue?.rawValue ?? "" }
     }
 
     var hasReminder: Bool { reminderDate != nil }
