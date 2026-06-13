@@ -52,7 +52,8 @@ final class HouseholdsModel {
         let temp = SharedChore(id: "temp-\(UUID().uuidString)", title: draft.title, details: draft.details,
                                kindRaw: draft.kind.rawValue, categoryRaw: draft.category.rawValue,
                                frequency: draft.frequency, symbolName: draft.symbolName,
-                               colorHue: draft.colorHue, assignee: draft.assignee, isDone: false, completedBy: nil)
+                               colorHue: draft.colorHue, createdAt: .now, assignee: draft.assignee,
+                               isDone: false, completedBy: nil)
         applyLocal(household.id) { $0.append(temp); $0.sort { $0.title < $1.title } }
         persist { try await self.service.addChore(to: household, draft: draft) }
     }
@@ -70,7 +71,7 @@ final class HouseholdsModel {
     }
 
     func setDone(_ chore: SharedChore, in household: Household, _ done: Bool) {
-        let occurrence = HouseholdService.currentOccurrence(for: chore.frequency)
+        let occurrence = HouseholdService.currentOccurrence(for: chore.frequency, anchor: chore.createdAt)
         let by = meDisplayName.isEmpty ? String(localized: "Someone") : meDisplayName
         applyLocal(household.id) { chores in
             if let i = chores.firstIndex(where: { $0.id == chore.id }) {

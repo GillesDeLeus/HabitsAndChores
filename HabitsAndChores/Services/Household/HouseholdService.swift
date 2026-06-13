@@ -32,6 +32,7 @@ struct SharedChore: Identifiable {
     var frequency: FrequencyRule
     var symbolName: String
     var colorHue: Double
+    var createdAt: Date             // recurrence anchor (CloudKit creation date)
     var assignee: String?           // member display name, or nil = unassigned
     var isDone: Bool                // completed for the current occurrence
     var completedBy: String?        // who completed the current occurrence
@@ -101,11 +102,30 @@ struct HouseholdService {
     /// Start-of-day of the chore's current scheduled occurrence, used to key
     /// per-occurrence completion (so a weekly chore stays done until next week).
     static func currentOccurrence(for frequency: FrequencyRule, asOf now: Date = .now,
-                                  calendar cal: Calendar = .current) -> Date {
+                                  anchor: Date = .now, calendar cal: Calendar = .current) -> Date {
         let today = cal.startOfDay(for: now)
         switch frequency.kind {
-        case .daily, .everyN:
+        case .daily:
             return today
+        case .everyN:
+            // Align to the anchor (chore creation): the most recent occurrence <= today.
+            let anchorDay = cal.startOfDay(for: anchor)
+            guard anchorDay <= today else { return anchorDay }
+            let interval = max(1, frequency.interval)
+            switch frequency.unit {
+            case .day:
+                let days = cal.dateComponents([.day], from: anchorDay, to: today).day ?? 0
+                return cal.date(byAdding: .day, value: -(days % interval), to: today) ?? today
+            case .week:
+                let days = cal.dateComponents([.day], from: anchorDay, to: today).day ?? 0
+                let alignedWeeks = (days / 7) - ((days / 7) % interval)
+                return cal.date(byAdding: .day, value: alignedWeeks * 7, to: anchorDay) ?? today
+            case .month:
+                let months = cal.dateComponents([.month], from: anchorDay, to: today).month ?? 0
+                let alignedMonths = months - (months % interval)
+                return cal.date(byAdding: .month, value: alignedMonths, to: anchorDay)
+                    .map { cal.startOfDay(for: $0) } ?? today
+            }
         case .weekly:
             let weekdays = Set(frequency.weekdays)
             guard !weekdays.isEmpty else { return today }
@@ -216,7 +236,8 @@ struct HouseholdService {
                     .map { rec -> SharedChore in
                         let frequency = (rec["frequency"] as? Data)
                             .flatMap { try? JSONDecoder().decode(FrequencyRule.self, from: $0) } ?? .daily
-                        let occurrence = Self.currentOccurrence(for: frequency, calendar: cal)
+                        let createdAt = rec.creationDate ?? .now
+                        let occurrence = Self.currentOccurrence(for: frequency, anchor: createdAt, calendar: cal)
                         let match = completionsByChore[rec.recordID.recordName]?.first {
                             ($0["date"] as? Date).map { cal.startOfDay(for: $0) } == occurrence
                         }
@@ -229,6 +250,7 @@ struct HouseholdService {
                             frequency: frequency,
                             symbolName: rec["symbol"] as? String ?? "checklist",
                             colorHue: rec["colorHue"] as? Double ?? 0.58,
+                            createdAt: createdAt,
                             assignee: rec["assignee"] as? String,
                             isDone: match != nil,
                             completedBy: match?["completedBy"] as? String)
