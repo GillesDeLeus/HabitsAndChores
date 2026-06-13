@@ -12,6 +12,8 @@ struct AvatarView: View {
         content
             .frame(width: size, height: size)
             .clipShape(Circle())
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(fallbackText.isEmpty ? Text("Avatar") : Text("\(fallbackText)’s avatar"))
     }
 
     @ViewBuilder

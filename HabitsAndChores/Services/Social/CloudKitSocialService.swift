@@ -120,6 +120,16 @@ struct CloudKitSocialService: SocialService {
         try await queryEdges(NSPredicate(format: "other == %@", userID))
     }
 
+    func edges(ownedByAny userIDs: [String]) async throws -> [FriendEdge] {
+        guard !userIDs.isEmpty else { return [] }
+        return try await queryEdges(NSPredicate(format: "owner IN %@", userIDs))
+    }
+
+    func edges(addressedToAny userIDs: [String]) async throws -> [FriendEdge] {
+        guard !userIDs.isEmpty else { return [] }
+        return try await queryEdges(NSPredicate(format: "other IN %@", userIDs))
+    }
+
     func profiles(userIDs: [String]) async throws -> [SharedProfile] {
         var result: [SharedProfile] = []
         for id in userIDs {

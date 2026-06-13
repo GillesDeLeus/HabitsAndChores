@@ -65,7 +65,7 @@ struct TaskListView: View {
             list[index].isArchived = true
             NotificationManager.shared.cancel(taskID: list[index].id)
         }
-        try? context.save()
+        context.saveOrReport()
     }
 
     private func delete(_ list: [TaskItem], at offsets: IndexSet) {
@@ -73,7 +73,7 @@ struct TaskListView: View {
             NotificationManager.shared.cancel(taskID: list[index].id)
             context.delete(list[index])
         }
-        try? context.save()
+        context.saveOrReport()
     }
 }
 

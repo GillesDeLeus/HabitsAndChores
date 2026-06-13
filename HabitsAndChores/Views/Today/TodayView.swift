@@ -7,6 +7,7 @@ struct TodayView: View {
     private var tasks: [TaskItem]
 
     @State private var confettiTrigger = 0
+    @State private var summary = GamificationEngine.Summary()
 
     private let today = Calendar.current.startOfDay(for: .now)
 
@@ -16,6 +17,12 @@ struct TodayView: View {
 
     private var completedCount: Int {
         dueToday.filter { $0.isCompleted(on: today) }.count
+    }
+
+    /// Cheap key that changes whenever a task or completion is added/removed, used
+    /// to recompute the (relatively expensive) gamification summary only when needed.
+    private var statsKey: String {
+        "\(tasks.count)-\(tasks.reduce(0) { $0 + $1.completions.count })"
     }
 
     var body: some View {
@@ -28,7 +35,6 @@ struct TodayView: View {
                         description: Text("Enjoy the day off, or add a task from the library.")
                     )
                 } else {
-                    let summary = GamificationEngine.summary(for: tasks)
                     List {
                         Section {
                             ProgressHeader(completed: completedCount, total: dueToday.count, summary: summary)
@@ -51,8 +57,10 @@ struct TodayView: View {
                     NavigationLink { CalendarView() } label: {
                         Image(systemName: "calendar")
                     }
+                    .accessibilityLabel("Calendar")
                 }
             }
+            .task(id: statsKey) { summary = GamificationEngine.summary(for: tasks) }
         }
     }
 
@@ -64,7 +72,7 @@ struct TodayView: View {
             let c = Completion(scheduledDate: today, status: .done, task: task)
             context.insert(c)
         }
-        try? context.save()
+        context.saveOrReport()
 
         // Celebrate only when marking done (not when un-checking), and only if it
         // unlocked something new (a badge or a level-up).

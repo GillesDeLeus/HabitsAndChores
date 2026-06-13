@@ -172,7 +172,7 @@ private struct SwatchRow: View {
         VStack(alignment: .leading, spacing: 6) {
             Text(title).font(.caption).foregroundStyle(.secondary)
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                HStack(spacing: 6) {
                     ForEach(colors.indices, id: \.self) { i in
                         Circle()
                             .fill(colors[i])
@@ -180,7 +180,11 @@ private struct SwatchRow: View {
                             .overlay {
                                 if i == index { Circle().strokeBorder(.primary, lineWidth: 2) }
                             }
+                            .frame(width: 44, height: 44)        // ≥44pt hit target (HIG)
+                            .contentShape(Circle())
                             .onTapGesture { index = i; onChange() }
+                            .accessibilityLabel("\(title) color \(i + 1)")
+                            .accessibilityAddTraits(i == index ? .isSelected : [])
                     }
                 }
                 .padding(.vertical, 2)

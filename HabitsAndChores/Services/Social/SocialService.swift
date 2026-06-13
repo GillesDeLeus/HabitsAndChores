@@ -37,6 +37,12 @@ protocol SocialService {
     /// All edges addressed to the user (others → me).
     func edges(addressedTo userID: String) async throws -> [FriendEdge]
 
+    /// All edges owned by any of the given users (one batched query).
+    func edges(ownedByAny userIDs: [String]) async throws -> [FriendEdge]
+
+    /// All edges addressed to any of the given users (one batched query).
+    func edges(addressedToAny userIDs: [String]) async throws -> [FriendEdge]
+
     /// Fetches profiles for a set of user ids (missing ones are skipped).
     func profiles(userIDs: [String]) async throws -> [SharedProfile]
 }

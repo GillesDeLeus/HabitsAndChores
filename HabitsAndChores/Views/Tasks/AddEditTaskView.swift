@@ -165,7 +165,7 @@ struct AddEditTaskView: View {
         target.reminderHour = reminderOn ? comps.hour : nil
         target.reminderMinute = reminderOn ? comps.minute : nil
 
-        try? context.save()
+        context.saveOrReport()
         Task { await NotificationManager.shared.reschedule(for: target) }
         dismiss()
     }
@@ -173,7 +173,7 @@ struct AddEditTaskView: View {
     private func toggleArchive() {
         guard let task else { return }
         task.isArchived.toggle()
-        try? context.save()
+        context.saveOrReport()
         if task.isArchived { NotificationManager.shared.cancel(taskID: task.id) }
         dismiss()
     }
@@ -182,7 +182,7 @@ struct AddEditTaskView: View {
         guard let task else { return }
         NotificationManager.shared.cancel(taskID: task.id)
         context.delete(task)
-        try? context.save()
+        context.saveOrReport()
         dismiss()
     }
 }

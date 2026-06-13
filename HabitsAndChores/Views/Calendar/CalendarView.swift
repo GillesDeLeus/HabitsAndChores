@@ -108,7 +108,7 @@ struct CalendarView: View {
         } else {
             context.insert(Completion(scheduledDate: day, status: .done, task: task))
         }
-        try? context.save()
+        context.saveOrReport()
     }
 
     private func shiftMonth(_ delta: Int) {

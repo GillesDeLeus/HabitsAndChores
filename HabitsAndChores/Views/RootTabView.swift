@@ -1,7 +1,12 @@
 import SwiftUI
+import SwiftData
 
 struct RootTabView: View {
     @Environment(SocialAccount.self) private var account
+    @Environment(\.scenePhase) private var scenePhase
+    @Query(filter: #Predicate<TaskItem> { !$0.isArchived }) private var tasks: [TaskItem]
+
+    private let service: SocialService = CloudKitSocialService()
 
     var body: some View {
         TabView {
@@ -20,9 +25,15 @@ struct RootTabView: View {
             SettingsView()
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
+        .errorBanner()
         .task(id: account.userID) {
             if let me = account.userID {
                 await SocialPushManager.registerSubscription(for: me)
+            }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .active || phase == .background {
+                Task { await ProfileSync.republish(account: account, tasks: tasks, service: service) }
             }
         }
     }

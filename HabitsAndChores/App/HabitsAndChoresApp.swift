@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import OSLog
 
 @main
 struct HabitsAndChoresApp: App {
@@ -21,6 +22,7 @@ struct HabitsAndChoresApp: App {
         } catch {
             // Fall back to a local-only store so the app still launches in
             // environments without iCloud (e.g. previews, CI, unsigned builds).
+            Logger.cloudkit.error("CloudKit container init failed, falling back to local-only store: \(error.localizedDescription, privacy: .public)")
             let local = ModelConfiguration(schema: schema, isStoredInMemoryOnly: false, cloudKitDatabase: .none)
             container = (try? ModelContainer(for: schema, configurations: [local]))
                 ?? (try! ModelContainer(for: schema, configurations: [ModelConfiguration(isStoredInMemoryOnly: true)]))

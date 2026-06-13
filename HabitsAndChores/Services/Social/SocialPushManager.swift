@@ -1,5 +1,6 @@
 import Foundation
 import CloudKit
+import OSLog
 
 extension Notification.Name {
     /// Posted when a friend-graph push arrives, so open views can reload.
@@ -43,7 +44,7 @@ enum SocialPushManager {
             // Already exists on the server — treat as success.
             UserDefaults.standard.set(true, forKey: flagKey(for: me))
         } catch {
-            print("⚠️ friend subscription registration failed: \(error)")
+            Logger.cloudkit.error("friend subscription registration failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 

@@ -66,23 +66,33 @@ final class FriendsModel {
         return .none
     }
 
-    /// Friends-of-friends, ranked by how many of my friends know them. Mutual on
-    /// the friend's side is required (active edges both directions).
+    /// Friends-of-friends, ranked by how many of my friends know them. Uses just
+    /// two batched CloudKit queries (`owner IN`, `other IN`) instead of two per
+    /// friend. A candidate counts only where the friendship is mutual on the
+    /// friend's side (active edges both directions).
     private func loadSuggestions() async {
         loadingSuggestions = true
         defer { loadingSuggestions = false }
 
+        let friendList = Array(friendIDs)
+        guard !friendList.isEmpty else { suggestions = []; return }
+
+        let outgoing = (try? await service.edges(ownedByAny: friendList))?.filter { $0.state == .active } ?? []
+        let incomingToFriends = (try? await service.edges(addressedToAny: friendList))?.filter { $0.state == .active } ?? []
+
+        // "friend|candidate" pairs where the candidate also points back at the friend.
+        var reciprocal: Set<String> = []
+        for edge in incomingToFriends { reciprocal.insert("\(edge.other)|\(edge.owner)") }
+
         let excluded = friendIDs.union([me]).union(incomingIDs).union(myEdgeTargets)
         var counts: [String: Int] = [:]
-        for friend in friends.prefix(15) {
-            guard let out = try? await service.edges(ownedBy: friend.userID),
-                  let inc = try? await service.edges(addressedTo: friend.userID) else { continue }
-            let theirOut = Set(out.filter { $0.state == .active }.map(\.other))
-            let theirIn = Set(inc.filter { $0.state == .active }.map(\.owner))
-            for candidate in theirOut.intersection(theirIn) where !excluded.contains(candidate) {
-                counts[candidate, default: 0] += 1
-            }
+        for edge in outgoing {        // owner = my friend, other = candidate
+            let candidate = edge.other
+            guard !excluded.contains(candidate),
+                  reciprocal.contains("\(edge.owner)|\(candidate)") else { continue }
+            counts[candidate, default: 0] += 1
         }
+
         let topIDs = counts.sorted { $0.value > $1.value }.prefix(12).map(\.key)
         let profiles = (try? await service.profiles(userIDs: topIDs)) ?? []
         suggestions = profiles

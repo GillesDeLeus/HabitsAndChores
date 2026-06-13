@@ -80,17 +80,17 @@ struct TodoListView: View {
         guard !title.isEmpty else { return }
         context.insert(TodoItem(title: title))
         newTitle = ""
-        try? context.save()
+        context.saveOrReport()
     }
 
     private func toggle(_ todo: TodoItem) {
         todo.toggle()
-        try? context.save()
+        context.saveOrReport()
     }
 
     private func delete(_ offsets: IndexSet) {
         for index in offsets { context.delete(filtered[index]) }
-        try? context.save()
+        context.saveOrReport()
     }
 }
 

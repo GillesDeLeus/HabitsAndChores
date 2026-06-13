@@ -1,5 +1,6 @@
 import UIKit
 import UserNotifications
+import OSLog
 
 /// Handles remote-notification registration and delivery for CloudKit friend-graph
 /// subscriptions. Attached to the SwiftUI app via `@UIApplicationDelegateAdaptor`.
@@ -21,7 +22,7 @@ final class AppDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCent
 
     func application(_ application: UIApplication,
                      didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        print("⚠️ remote notification registration failed: \(error)")
+        Logger.cloudkit.error("remote notification registration failed: \(error.localizedDescription, privacy: .public)")
     }
 
     // Show the banner even when the app is in the foreground.

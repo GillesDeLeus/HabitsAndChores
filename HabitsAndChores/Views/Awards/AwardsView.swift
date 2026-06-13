@@ -6,34 +6,38 @@ struct AwardsView: View {
     private var tasks: [TaskItem]
 
     @State private var confettiTrigger = 0
-
-    private var summary: GamificationEngine.Summary {
-        GamificationEngine.summary(for: tasks)
-    }
+    @State private var summary = GamificationEngine.Summary()
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 16)]
+
+    /// Cheap key that changes when tasks/completions change; drives recompute.
+    private var statsKey: String {
+        "\(tasks.count)-\(tasks.reduce(0) { $0 + $1.completions.count })"
+    }
 
     var body: some View {
         NavigationStack {
             ScrollView {
-                let s = summary
                 VStack(spacing: 20) {
-                    LevelCard(summary: s)
-                    StatTiles(summary: s)
-                    badgeSection(s)
+                    LevelCard(summary: summary)
+                    StatTiles(summary: summary)
+                    badgeSection(summary)
                 }
                 .padding()
             }
             .navigationTitle("Awards")
             .background(Color(.systemGroupedBackground))
             .overlay { ConfettiView(trigger: confettiTrigger) }
-            .onAppear { celebrateIfNeeded(summary) }
-            .onChange(of: tasks.map(\.persistentModelID)) { _, _ in celebrateIfNeeded(summary) }
+            .task(id: statsKey) {
+                summary = GamificationEngine.summary(for: tasks)
+                celebrateIfNeeded(summary)
+            }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     NavigationLink { FriendsView() } label: {
                         Image(systemName: "person.2.fill")
                     }
+                    .accessibilityLabel("Friends")
                 }
             }
         }

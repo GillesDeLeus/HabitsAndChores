@@ -64,9 +64,11 @@ struct FriendsView: View {
                             Button { Task { await model.accept(profile) } } label: {
                                 Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
                             }
+                            .accessibilityLabel("Accept \(profile.displayName)")
                             Button { Task { await model.decline(profile) } } label: {
                                 Image(systemName: "xmark.circle.fill").foregroundStyle(.red)
                             }
+                            .accessibilityLabel("Decline \(profile.displayName)")
                         }
                         .buttonStyle(.plain)
                     }
