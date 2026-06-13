@@ -114,7 +114,7 @@ private struct DataExport: Codable {
         let createdAt: Date
         let completedAt: Date?
         let dueDate: Date?
-        let reminderDate: Date?
+        let reminder: String?
         let priority: String
         let category: String?
 
@@ -125,7 +125,7 @@ private struct DataExport: Codable {
             createdAt = todo.createdAt
             completedAt = todo.completedAt
             dueDate = todo.dueDate
-            reminderDate = todo.reminderDate
+            reminder = todo.reminderSummary
             priority = todo.priority.label
             category = todo.category?.localizedName
         }

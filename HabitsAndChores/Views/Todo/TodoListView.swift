@@ -179,10 +179,11 @@ private struct TodoRow: View {
                             .foregroundStyle(todo.isDone ? .secondary : .primary)
                         HStack(spacing: 8) {
                             if let due = todo.dueDate {
-                                Label(due.formatted(.dateTime.month().day()), systemImage: todo.hasReminder ? "bell.fill" : "calendar")
+                                Label(due.formatted(.dateTime.month().day()), systemImage: "calendar")
                                     .foregroundStyle(todo.isOverdue ? .red : .secondary)
-                            } else if todo.hasReminder {
-                                Image(systemName: "bell.fill")
+                            }
+                            if let reminder = todo.reminderSummary {
+                                Label(reminder, systemImage: "bell.fill")
                             }
                             if let category = todo.category {
                                 Label(category.localizedName, systemImage: category.symbolName)

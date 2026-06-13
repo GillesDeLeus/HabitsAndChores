@@ -12,8 +12,10 @@ struct TodoEditView: View {
     @State private var details: String
     @State private var hasDue: Bool
     @State private var due: Date
-    @State private var hasReminder: Bool
-    @State private var reminder: Date
+    @State private var reminderMode: TodoReminderMode
+    @State private var reminderAt: Date
+    @State private var reminderOffset: Double
+    @State private var dailyTime: Date
     @State private var priority: TodoPriority
     @State private var category: TaskCategory?
 
@@ -25,8 +27,10 @@ struct TodoEditView: View {
         _details = State(initialValue: todo.details)
         _hasDue = State(initialValue: todo.dueDate != nil)
         _due = State(initialValue: todo.dueDate ?? tomorrow9)
-        _hasReminder = State(initialValue: todo.reminderDate != nil)
-        _reminder = State(initialValue: todo.reminderDate ?? tomorrow9)
+        _reminderMode = State(initialValue: todo.reminderMode)
+        _reminderAt = State(initialValue: todo.reminderDate ?? tomorrow9)
+        _reminderOffset = State(initialValue: todo.reminderOffset)
+        _dailyTime = State(initialValue: todo.reminderDate ?? tomorrow9)
         _priority = State(initialValue: todo.priority)
         _category = State(initialValue: todo.category)
     }
@@ -42,19 +46,17 @@ struct TodoEditView: View {
                 Section {
                     Toggle("Due date", isOn: $hasDue.animation())
                     if hasDue {
-                        DatePicker("Due", selection: $due, displayedComponents: .date)
+                        DatePicker("Due", selection: $due, displayedComponents: [.date, .hourAndMinute])
                     }
                 }
 
                 Section {
-                    Toggle("Reminder", isOn: $hasReminder.animation())
-                    if hasReminder {
-                        DatePicker("Remind me", selection: $reminder)
+                    Picker("Reminder", selection: $reminderMode.animation()) {
+                        ForEach(TodoReminderMode.allCases) { Text($0.label).tag($0) }
                     }
+                    reminderDetail
                 } footer: {
-                    if hasReminder {
-                        Text("You'll get a notification at this time.")
-                    }
+                    reminderFooter
                 }
 
                 Section {
@@ -73,6 +75,9 @@ struct TodoEditView: View {
             }
             .navigationTitle("Edit To-Do")
             .navigationBarTitleDisplayMode(.inline)
+            .onChange(of: hasDue) { _, on in
+                if !on, reminderMode == .beforeDue { reminderMode = .none }
+            }
             .toolbar {
                 ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .confirmationAction) {
@@ -83,11 +88,55 @@ struct TodoEditView: View {
         }
     }
 
+    @ViewBuilder
+    private var reminderDetail: some View {
+        switch reminderMode {
+        case .none:
+            EmptyView()
+        case .atTime:
+            DatePicker("Time", selection: $reminderAt)
+        case .beforeDue:
+            if hasDue {
+                Picker("When", selection: $reminderOffset) {
+                    ForEach(TodoReminderOffset.options, id: \.seconds) { option in
+                        Text(option.label).tag(option.seconds)
+                    }
+                }
+            } else {
+                Text("Turn on a due date to use this.")
+                    .font(.footnote).foregroundStyle(.secondary)
+            }
+        case .dailyUntilDone:
+            DatePicker("Time", selection: $dailyTime, displayedComponents: .hourAndMinute)
+        }
+    }
+
+    @ViewBuilder
+    private var reminderFooter: some View {
+        switch reminderMode {
+        case .none:           EmptyView()
+        case .atTime:         Text("You'll get one notification at this time.")
+        case .beforeDue:      Text("Reminds you relative to the due date.")
+        case .dailyUntilDone: Text("Reminds you every day at this time until you mark it done.")
+        }
+    }
+
     private func save() {
         todo.title = title.trimmingCharacters(in: .whitespaces)
         todo.details = details.trimmingCharacters(in: .whitespacesAndNewlines)
         todo.dueDate = hasDue ? due : nil
-        todo.reminderDate = hasReminder ? reminder : nil
+        // "Before due" needs a due date.
+        todo.reminderMode = (reminderMode == .beforeDue && !hasDue) ? .none : reminderMode
+        switch todo.reminderMode {
+        case .none:
+            todo.reminderDate = nil; todo.reminderOffset = 0
+        case .atTime:
+            todo.reminderDate = reminderAt; todo.reminderOffset = 0
+        case .beforeDue:
+            todo.reminderDate = nil; todo.reminderOffset = reminderOffset
+        case .dailyUntilDone:
+            todo.reminderDate = dailyTime; todo.reminderOffset = 0
+        }
         todo.priority = priority
         todo.category = category
         context.saveOrReport()

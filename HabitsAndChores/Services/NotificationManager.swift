@@ -63,18 +63,39 @@ final class NotificationManager {
 
     // MARK: - To-dos
 
-    /// Schedules (or clears) a one-shot reminder for a to-do.
+    /// Schedules (or clears) a to-do reminder: at a fixed time, relative to its due
+    /// date, or repeating daily until it's done.
     func reschedule(todo: TodoItem) async {
         cancelTodo(id: todo.id)
-        guard !todo.isDone, let date = todo.reminderDate, date > .now else { return }
+        guard !todo.isDone else { return }
 
+        let cal = Calendar.current
         let content = UNMutableNotificationContent()
         content.title = String(localized: "To-Do")
         content.body = todo.title
         content.sound = .default
 
-        let comps = Calendar.current.dateComponents([.year, .month, .day, .hour, .minute], from: date)
-        let trigger = UNCalendarNotificationTrigger(dateMatching: comps, repeats: false)
+        let trigger: UNCalendarNotificationTrigger?
+        switch todo.reminderMode {
+        case .none:
+            trigger = nil
+        case .atTime:
+            guard let date = todo.reminderDate, date > .now else { return }
+            trigger = UNCalendarNotificationTrigger(
+                dateMatching: cal.dateComponents([.year, .month, .day, .hour, .minute], from: date), repeats: false)
+        case .beforeDue:
+            guard let due = todo.dueDate else { return }
+            let fire = due.addingTimeInterval(-todo.reminderOffset)
+            guard fire > .now else { return }
+            trigger = UNCalendarNotificationTrigger(
+                dateMatching: cal.dateComponents([.year, .month, .day, .hour, .minute], from: fire), repeats: false)
+        case .dailyUntilDone:
+            guard let time = todo.reminderDate else { return }
+            trigger = UNCalendarNotificationTrigger(
+                dateMatching: cal.dateComponents([.hour, .minute], from: time), repeats: true)
+        }
+
+        guard let trigger else { return }
         let request = UNNotificationRequest(identifier: "todo-\(todo.id.uuidString)", content: content, trigger: trigger)
         try? await center.add(request)
     }
