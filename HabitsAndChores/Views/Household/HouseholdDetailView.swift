@@ -5,10 +5,11 @@ struct HouseholdDetailView: View {
     let householdID: String
     @Bindable var model: HouseholdsModel
 
-    @State private var newChore = ""
     @State private var sharePresentation: SharePresentation?
     @State private var showAddFriends = false
     @State private var inviteAfterAdd = false
+    @State private var addingChore = false
+    @State private var choreToEdit: SharedChore?
 
     private var household: Household? {
         model.households.first { $0.id == householdID }
@@ -29,27 +30,19 @@ struct HouseholdDetailView: View {
 
     private func content(_ household: Household) -> some View {
         List {
-            Section {
-                HStack {
-                    Image(systemName: "plus.circle.fill").foregroundStyle(Color.accentColor)
-                    TextField("Add a chore", text: $newChore)
-                        .onSubmit { addChore(household) }
-                        .submitLabel(.done)
-                }
-            }
-
             Section("Chores") {
                 if household.chores.isEmpty {
-                    Text("No chores yet.").font(.callout).foregroundStyle(.secondary)
+                    Text("No chores yet. Tap + to add one.").font(.callout).foregroundStyle(.secondary)
                 } else {
                     ForEach(household.chores) { chore in
-                        ChoreRow(chore: chore, members: household.members,
-                                 toggle: { Task { await model.setDone(chore, in: household, !chore.isDone) } },
-                                 assign: { member in Task { await model.assign(chore, to: member, in: household) } })
+                        ChoreRow(chore: chore) {
+                            model.setDone(chore, in: household, !chore.isDone)
+                        } edit: {
+                            choreToEdit = chore
+                        }
                     }
                     .onDelete { offsets in
-                        let targets = offsets.map { household.chores[$0] }
-                        Task { for chore in targets { await model.delete(chore, in: household) } }
+                        offsets.map { household.chores[$0] }.forEach { model.delete($0, in: household) }
                     }
                 }
             }
@@ -68,7 +61,22 @@ struct HouseholdDetailView: View {
         }
         .navigationTitle(household.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar { ToolbarItem(placement: .topBarTrailing) { EditButton() } }
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { addingChore = true } label: { Image(systemName: "plus") }
+                    .accessibilityLabel("Add chore")
+            }
+        }
+        .sheet(isPresented: $addingChore) {
+            HouseholdChoreEditView(members: household.members, existing: nil) { draft in
+                model.addChore(to: household, draft: draft)
+            }
+        }
+        .sheet(item: $choreToEdit) { chore in
+            HouseholdChoreEditView(members: household.members, existing: chore) { draft in
+                model.updateChore(chore, draft: draft, in: household)
+            }
+        }
         .sheet(isPresented: $showAddFriends, onDismiss: {
             if inviteAfterAdd { inviteAfterAdd = false; invite(household) }
         }) {
@@ -78,13 +86,6 @@ struct HouseholdDetailView: View {
                 inviteAfterAdd = true
             })
         }
-    }
-
-    private func addChore(_ household: Household) {
-        let title = newChore.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !title.isEmpty else { return }
-        newChore = ""
-        Task { await model.addChore(to: household, title: title) }
     }
 
     private func invite(_ household: Household) {
@@ -98,9 +99,8 @@ struct HouseholdDetailView: View {
 
 private struct ChoreRow: View {
     let chore: SharedChore
-    let members: [String]
     let toggle: () -> Void
-    let assign: (String?) -> Void
+    let edit: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -111,26 +111,32 @@ private struct ChoreRow: View {
             }
             .buttonStyle(.plain)
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(chore.title)
-                    .strikethrough(chore.isDone, color: .secondary)
-                    .foregroundStyle(chore.isDone ? .secondary : .primary)
-                if let assignee = chore.assignee {
-                    Label(assignee, systemImage: "person.fill").font(.caption2).foregroundStyle(.secondary)
+            Button(action: edit) {
+                HStack(spacing: 12) {
+                    Image(systemName: chore.symbolName)
+                        .font(.caption)
+                        .foregroundStyle(.white)
+                        .frame(width: 30, height: 30)
+                        .background(Color(hue: chore.colorHue, saturation: 0.65, brightness: 0.9),
+                                    in: RoundedRectangle(cornerRadius: 7))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(chore.title)
+                            .strikethrough(chore.isDone, color: .secondary)
+                            .foregroundStyle(chore.isDone ? .secondary : .primary)
+                        HStack(spacing: 6) {
+                            Text(chore.frequency.localizedDescription)
+                            if let assignee = chore.assignee {
+                                Text("· \(assignee)")
+                            }
+                        }
+                        .font(.caption2).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Image(systemName: "chevron.right").font(.caption2).foregroundStyle(.tertiary)
                 }
+                .contentShape(Rectangle())
             }
-            Spacer()
-
-            Menu {
-                Button("Unassigned") { assign(nil) }
-                ForEach(members, id: \.self) { member in
-                    Button(member) { assign(member) }
-                }
-            } label: {
-                Image(systemName: "person.crop.circle.badge.questionmark")
-                    .foregroundStyle(.secondary)
-            }
-            .accessibilityLabel("Assign chore")
+            .buttonStyle(.plain)
         }
     }
 }

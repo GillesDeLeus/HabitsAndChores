@@ -21,12 +21,47 @@ struct Household: Identifiable {
     var isOwner: Bool { scope == .private }
 }
 
-/// A chore that belongs to a household and can be assigned to a member.
+/// A chore that belongs to a household — a full habit/chore (kind, category,
+/// recurrence, icon, colour), optionally assigned to a member.
 struct SharedChore: Identifiable {
     let id: String                  // record name
     var title: String
-    var isDone: Bool
+    var details: String
+    var kindRaw: String
+    var categoryRaw: String
+    var frequency: FrequencyRule
+    var symbolName: String
+    var colorHue: Double
     var assignee: String?           // member display name, or nil = unassigned
+    var isDone: Bool
+
+    var kind: TaskKind { TaskKind(rawValue: kindRaw) ?? .chore }
+    var category: TaskCategory { TaskCategory(rawValue: categoryRaw) ?? .other }
+}
+
+/// Editable fields for creating/updating a shared chore.
+struct ChoreDraft {
+    var title = ""
+    var details = ""
+    var kind: TaskKind = .chore
+    var category: TaskCategory = .home
+    var symbolName = "house.fill"
+    var colorHue = 0.58
+    var frequency: FrequencyRule = .daily
+    var assignee: String?
+
+    init() {}
+
+    init(_ chore: SharedChore) {
+        title = chore.title
+        details = chore.details
+        kind = chore.kind
+        category = chore.category
+        symbolName = chore.symbolName
+        colorHue = chore.colorHue
+        frequency = chore.frequency
+        assignee = chore.assignee
+    }
 }
 
 enum HouseholdError: LocalizedError {
@@ -106,11 +141,20 @@ struct HouseholdService {
 
                 let chores = records
                     .filter { $0.recordType == RecordType.chore }
-                    .map { rec in
-                        SharedChore(id: rec.recordID.recordName,
-                                    title: rec["title"] as? String ?? "",
-                                    isDone: (rec["isDone"] as? Int ?? 0) == 1,
-                                    assignee: rec["assignee"] as? String)
+                    .map { rec -> SharedChore in
+                        let frequency = (rec["frequency"] as? Data)
+                            .flatMap { try? JSONDecoder().decode(FrequencyRule.self, from: $0) } ?? .daily
+                        return SharedChore(
+                            id: rec.recordID.recordName,
+                            title: rec["title"] as? String ?? "",
+                            details: rec["details"] as? String ?? "",
+                            kindRaw: rec["kind"] as? String ?? TaskKind.chore.rawValue,
+                            categoryRaw: rec["category"] as? String ?? TaskCategory.other.rawValue,
+                            frequency: frequency,
+                            symbolName: rec["symbol"] as? String ?? "checklist",
+                            colorHue: rec["colorHue"] as? Double ?? 0.58,
+                            assignee: rec["assignee"] as? String,
+                            isDone: (rec["isDone"] as? Int ?? 0) == 1)
                     }
                     .sorted { $0.title < $1.title }
 
@@ -124,17 +168,32 @@ struct HouseholdService {
 
     // MARK: Chores
 
-    func addChore(to household: Household, title: String) async throws {
+    func addChore(to household: Household, draft: ChoreDraft) async throws {
         let db = database(household.scope)
         let record = CKRecord(recordType: RecordType.chore,
                               recordID: CKRecord.ID(recordName: UUID().uuidString, zoneID: household.zoneID))
-        record["title"] = title
         record["isDone"] = 0
         // Parent link so the chore is shared together with the household root.
         let rootID = CKRecord.ID(recordName: household.id, zoneID: household.zoneID)
         record.parent = CKRecord.Reference(recordID: rootID, action: .none)
         record["household"] = CKRecord.Reference(recordID: rootID, action: .deleteSelf)
+        apply(draft, to: record)
         _ = try await db.save(record)
+    }
+
+    func updateChore(_ chore: SharedChore, draft: ChoreDraft, in household: Household) async throws {
+        try await update(chore, in: household) { apply(draft, to: $0) }
+    }
+
+    private func apply(_ draft: ChoreDraft, to record: CKRecord) {
+        record["title"] = draft.title
+        record["details"] = draft.details
+        record["kind"] = draft.kind.rawValue
+        record["category"] = draft.category.rawValue
+        record["symbol"] = draft.symbolName
+        record["colorHue"] = draft.colorHue
+        record["assignee"] = draft.assignee
+        record["frequency"] = try? JSONEncoder().encode(draft.frequency)
     }
 
     func setDone(_ chore: SharedChore, in household: Household, done: Bool) async throws {

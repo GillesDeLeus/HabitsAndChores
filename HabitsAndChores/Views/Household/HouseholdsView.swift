@@ -35,11 +35,54 @@ final class HouseholdsModel {
         }
     }
 
-    func delete(_ household: Household) async { await run { try await service.deleteHousehold(household) } }
-    func addChore(to household: Household, title: String) async { await run { try await service.addChore(to: household, title: title) } }
-    func setDone(_ chore: SharedChore, in household: Household, _ done: Bool) async { await run { try await service.setDone(chore, in: household, done: done) } }
-    func assign(_ chore: SharedChore, to member: String?, in household: Household) async { await run { try await service.assign(chore, to: member, in: household) } }
-    func delete(_ chore: SharedChore, in household: Household) async { await run { try await service.deleteChore(chore, in: household) } }
+    // MARK: Optimistic mutations — update local state immediately, sync in the
+    // background, then quietly reconcile (or revert on failure).
+
+    func delete(_ household: Household) {
+        households.removeAll { $0.id == household.id }
+        persist { try await self.service.deleteHousehold(household) }
+    }
+
+    func addChore(to household: Household, draft: ChoreDraft) {
+        let temp = SharedChore(id: "temp-\(UUID().uuidString)", title: draft.title, details: draft.details,
+                               kindRaw: draft.kind.rawValue, categoryRaw: draft.category.rawValue,
+                               frequency: draft.frequency, symbolName: draft.symbolName,
+                               colorHue: draft.colorHue, assignee: draft.assignee, isDone: false)
+        applyLocal(household.id) { $0.append(temp); $0.sort { $0.title < $1.title } }
+        persist { try await self.service.addChore(to: household, draft: draft) }
+    }
+
+    func updateChore(_ chore: SharedChore, draft: ChoreDraft, in household: Household) {
+        applyLocal(household.id) { chores in
+            guard let i = chores.firstIndex(where: { $0.id == chore.id }) else { return }
+            chores[i].title = draft.title; chores[i].details = draft.details
+            chores[i].kindRaw = draft.kind.rawValue; chores[i].categoryRaw = draft.category.rawValue
+            chores[i].frequency = draft.frequency; chores[i].symbolName = draft.symbolName
+            chores[i].colorHue = draft.colorHue; chores[i].assignee = draft.assignee
+            chores.sort { $0.title < $1.title }
+        }
+        persist { try await self.service.updateChore(chore, draft: draft, in: household) }
+    }
+
+    func setDone(_ chore: SharedChore, in household: Household, _ done: Bool) {
+        applyLocal(household.id) { chores in
+            if let i = chores.firstIndex(where: { $0.id == chore.id }) { chores[i].isDone = done }
+        }
+        persist { try await self.service.setDone(chore, in: household, done: done) }
+    }
+
+    func assign(_ chore: SharedChore, to member: String?, in household: Household) {
+        applyLocal(household.id) { chores in
+            if let i = chores.firstIndex(where: { $0.id == chore.id }) { chores[i].assignee = member }
+        }
+        persist { try await self.service.assign(chore, to: member, in: household) }
+    }
+
+    func delete(_ chore: SharedChore, in household: Household) {
+        applyLocal(household.id) { $0.removeAll { $0.id == chore.id } }
+        persist { try await self.service.deleteChore(chore, in: household) }
+    }
+
     func share(for household: Household) async -> (CKShare, CKContainer)? { try? await service.share(for: household) }
 
     /// Adds an app friend to a household by their CloudKit user record name.
@@ -50,16 +93,29 @@ final class HouseholdsModel {
         }
         do {
             try await service.addFriend(userRecordName: recordName, to: household)
-            await reload()
+            await refreshQuietly()
             return nil
         } catch {
             return (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
         }
     }
 
-    private func run(_ work: () async throws -> Void) async {
-        do { try await work(); await reload() }
-        catch { self.error = error.localizedDescription }
+    private func applyLocal(_ householdID: String, _ mutate: (inout [SharedChore]) -> Void) {
+        guard let index = households.firstIndex(where: { $0.id == householdID }) else { return }
+        mutate(&households[index].chores)
+    }
+
+    private func persist(_ work: @escaping () async throws -> Void) {
+        Task {
+            do { try await work() }
+            catch { self.error = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription }
+            await refreshQuietly()
+        }
+    }
+
+    private func refreshQuietly() async {
+        guard await service.isAvailable() else { return }
+        if let fresh = try? await service.households() { households = fresh }
     }
 }
 
