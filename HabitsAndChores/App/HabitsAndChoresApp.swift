@@ -33,7 +33,6 @@ struct HabitsAndChoresApp: App {
         WindowGroup {
             RootTabView()
                 .environment(social)
-                .task { await NotificationManager.shared.requestAuthorizationIfNeeded() }
         }
         .modelContainer(container)
     }

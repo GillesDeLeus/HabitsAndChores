@@ -6,6 +6,9 @@ struct RootTabView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Query(filter: #Predicate<TaskItem> { !$0.isArchived }) private var tasks: [TaskItem]
 
+    @AppStorage("hasCompletedOnboarding") private var onboardingComplete = false
+    @State private var showOnboarding = false
+
     private let service: SocialService = CloudKitSocialService()
 
     var body: some View {
@@ -26,6 +29,19 @@ struct RootTabView: View {
                 .tabItem { Label("Settings", systemImage: "gearshape.fill") }
         }
         .errorBanner()
+        .onAppear { if !onboardingComplete { showOnboarding = true } }
+        .fullScreenCover(isPresented: $showOnboarding) {
+            OnboardingView {
+                onboardingComplete = true
+                showOnboarding = false
+                Task { await NotificationManager.shared.requestAuthorizationIfNeeded() }
+            }
+        }
+        .task {
+            // Returning users (onboarding already done): ask for notifications here
+            // rather than over the first-run onboarding.
+            if onboardingComplete { await NotificationManager.shared.requestAuthorizationIfNeeded() }
+        }
         .task(id: account.userID) {
             if let me = account.userID {
                 await SocialPushManager.registerSubscription(for: me)
