@@ -68,6 +68,7 @@ struct CloudKitSocialService: SocialService {
         record["badgeTiers"] = try? JSONEncoder().encode(profile.badgeTiers)
         record["updatedAt"] = profile.updatedAt
         record["avatarConfig"] = profile.avatarConfig?.encoded
+        record["cloudUserRecordName"] = profile.cloudUserRecordName
         if let data = profile.photoData {
             let url = FileManager.default.temporaryDirectory
                 .appendingPathComponent(UUID().uuidString).appendingPathExtension("jpg")
@@ -192,7 +193,8 @@ struct CloudKitSocialService: SocialService {
             badgeTiers: tiers,
             updatedAt: record["updatedAt"] as? Date ?? .now,
             avatarConfig: AvatarConfig(data: record["avatarConfig"] as? Data),
-            photoData: photoData
+            photoData: photoData,
+            cloudUserRecordName: record["cloudUserRecordName"] as? String
         )
     }
 }

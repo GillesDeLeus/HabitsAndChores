@@ -20,7 +20,8 @@ enum ProfileSync {
             displayName: account.displayName.isEmpty ? handle : account.displayName,
             summary: summary,
             avatarConfig: account.avatarConfig,
-            photoData: account.photoData
+            photoData: account.photoData,
+            cloudUserRecordName: account.cloudUserRecordName
         )
         do {
             try await service.publish(profile)

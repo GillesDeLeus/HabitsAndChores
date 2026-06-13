@@ -19,10 +19,15 @@ struct SharedProfile: Identifiable, Equatable {
     var avatarConfig: AvatarConfig?
     var photoData: Data?
 
+    /// CloudKit user record name, used to add this person to a shared household
+    /// without a manual invite link. Nil for accounts created before this existed.
+    var cloudUserRecordName: String?
+
     init(userID: String, handle: String, displayName: String,
          level: Int, points: Int, longestStreak: Int, bestCurrentStreak: Int,
          badgeTiers: [String: Int], updatedAt: Date = .now,
-         avatarConfig: AvatarConfig? = nil, photoData: Data? = nil) {
+         avatarConfig: AvatarConfig? = nil, photoData: Data? = nil,
+         cloudUserRecordName: String? = nil) {
         self.userID = userID
         self.handle = handle
         self.displayName = displayName
@@ -34,6 +39,7 @@ struct SharedProfile: Identifiable, Equatable {
         self.updatedAt = updatedAt
         self.avatarConfig = avatarConfig
         self.photoData = photoData
+        self.cloudUserRecordName = cloudUserRecordName
     }
 }
 
@@ -42,7 +48,8 @@ extension SharedProfile {
     @MainActor
     init(userID: String, handle: String, displayName: String,
          summary: GamificationEngine.Summary,
-         avatarConfig: AvatarConfig? = nil, photoData: Data? = nil) {
+         avatarConfig: AvatarConfig? = nil, photoData: Data? = nil,
+         cloudUserRecordName: String? = nil) {
         self.init(
             userID: userID,
             handle: handle,
@@ -55,7 +62,8 @@ extension SharedProfile {
                 GamificationEngine.achievements.map { ($0.id, $0.tierReached(summary)) }),
             updatedAt: .now,
             avatarConfig: avatarConfig,
-            photoData: photoData
+            photoData: photoData,
+            cloudUserRecordName: cloudUserRecordName
         )
     }
 }

@@ -40,6 +40,14 @@ struct SettingsView: View {
                     }
                 }
 
+                Section(header: Text("Sharing")) {
+                    NavigationLink {
+                        HouseholdsView()
+                    } label: {
+                        Label("Household chores", systemImage: "house.and.flag.fill")
+                    }
+                }
+
                 Section(header: Text("Data")) {
                     Link(destination: URL(string: "https://www.apple.com/icloud/")!) {
                         Label("iCloud sync is automatic", systemImage: "icloud.fill")

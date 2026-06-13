@@ -1,6 +1,7 @@
 import SwiftUI
 import SwiftData
 import AuthenticationServices
+import CloudKit
 
 /// The "Account" section shown in Settings. Reflects the opt-in state and hosts
 /// the create / leave flows. Everything here is inert until the user opts in.
@@ -217,16 +218,20 @@ private struct CreateAccountSheet: View {
             do {
                 guard await service.isAvailable() else { throw SocialError.iCloudUnavailable }
                 try await service.claimHandle(handle, for: pendingUserID)
+                let cloudUserRecordName = try? await CKContainer(identifier: CloudKitSocialService.containerID)
+                    .userRecordID().recordName
                 let summary = GamificationEngine.summary(for: tasks)
                 let profile = SharedProfile(
                     userID: pendingUserID,
                     handle: handle,
                     displayName: suggestedName.isEmpty ? handle : suggestedName,
-                    summary: summary
+                    summary: summary,
+                    cloudUserRecordName: cloudUserRecordName
                 )
                 try await service.publish(profile)
                 account.markJoined(userID: pendingUserID, handle: handle,
-                                   displayName: suggestedName.isEmpty ? handle : suggestedName)
+                                   displayName: suggestedName.isEmpty ? handle : suggestedName,
+                                   cloudUserRecordName: cloudUserRecordName)
                 dismiss()
             } catch {
                 errorMessage = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription

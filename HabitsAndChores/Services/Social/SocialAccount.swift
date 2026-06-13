@@ -15,6 +15,7 @@ final class SocialAccount {
 
     private(set) var state: State = .anonymous
     private(set) var displayName: String = ""
+    private(set) var cloudUserRecordName: String?
 
     // Avatar (cached locally). A photo takes precedence over a built character.
     private(set) var avatarConfig: AvatarConfig?
@@ -27,6 +28,7 @@ final class SocialAccount {
         static let userID = "social.userID"
         static let displayName = "social.displayName"
         static let avatarConfig = "social.avatarConfig"
+        static let cloudUserRecordName = "social.cloudUserRecordName"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -44,6 +46,7 @@ final class SocialAccount {
            let h = defaults.string(forKey: Key.handle), !h.isEmpty {
             state = .active(userID: id, handle: h)
             displayName = defaults.string(forKey: Key.displayName) ?? h
+            cloudUserRecordName = defaults.string(forKey: Key.cloudUserRecordName)
             avatarConfig = AvatarConfig(data: defaults.data(forKey: Key.avatarConfig))
             photoData = try? Data(contentsOf: Self.photoURL)
         } else {
@@ -51,13 +54,15 @@ final class SocialAccount {
         }
     }
 
-    func markJoined(userID: String, handle: String, displayName: String) {
+    func markJoined(userID: String, handle: String, displayName: String, cloudUserRecordName: String?) {
         defaults.set(true, forKey: Key.joined)
         defaults.set(userID, forKey: Key.userID)
         defaults.set(handle, forKey: Key.handle)
         defaults.set(displayName, forKey: Key.displayName)
+        defaults.set(cloudUserRecordName, forKey: Key.cloudUserRecordName)
         state = .active(userID: userID, handle: handle)
         self.displayName = displayName
+        self.cloudUserRecordName = cloudUserRecordName
     }
 
     func updateDisplayName(_ name: String) {
@@ -68,12 +73,13 @@ final class SocialAccount {
     }
 
     func markLeft() {
-        for key in [Key.joined, Key.userID, Key.handle, Key.displayName, Key.avatarConfig] {
+        for key in [Key.joined, Key.userID, Key.handle, Key.displayName, Key.avatarConfig, Key.cloudUserRecordName] {
             defaults.removeObject(forKey: key)
         }
         try? FileManager.default.removeItem(at: Self.photoURL)
         state = .anonymous
         displayName = ""
+        cloudUserRecordName = nil
         avatarConfig = nil
         photoData = nil
     }
