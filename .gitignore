@@ -1,0 +1,22 @@
+# Xcode
+build/
+DerivedData/
+*.xcodeproj/*
+!*.xcodeproj/project.pbxproj
+*.xcworkspace/xcuserdata/
+xcuserdata/
+*.xcuserstate
+
+# XcodeGen output (regenerate with `xcodegen generate`)
+HabitsAndChores.xcodeproj/
+
+# macOS
+.DS_Store
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Packages/
+
+# Internal review (not for the public repo)
+HabitsAndChores-Review.pdf
