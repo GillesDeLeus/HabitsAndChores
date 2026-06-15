@@ -46,6 +46,23 @@ final class StreakTests: XCTestCase {
         XCTAssertEqual(SchedulingEngine.currentStreak(for: task), 2)
     }
 
+    /// The calendar row computes the streak `asOf` the day it's showing, so a run
+    /// ending on a past day reads as that day's streak — not a today-relative number
+    /// (which is what made the count look "random" when toggling other days).
+    func testCurrentStreakIsRelativeToAsOfDay() throws {
+        let ctx = try context()
+        let task = dailyTask(in: ctx)
+        addDone(task, daysAgo: 5, in: ctx)
+        addDone(task, daysAgo: 6, in: ctx)
+        addDone(task, daysAgo: 7, in: ctx)
+        try ctx.save()
+        // As of today the run isn't current (there's a gap since 5 days ago).
+        XCTAssertEqual(SchedulingEngine.currentStreak(for: task), 0)
+        // As of 5 days ago, that run of 3 *is* the current streak — what the row shows.
+        let fiveDaysAgo = cal.date(byAdding: .day, value: -5, to: cal.startOfDay(for: .now))!
+        XCTAssertEqual(SchedulingEngine.currentStreak(for: task, asOf: fiveDaysAgo), 3)
+    }
+
     func testLongestStreakFindsBestRun() throws {
         let ctx = try context()
         let task = dailyTask(in: ctx)

@@ -4,12 +4,12 @@ import CloudKit
 struct HouseholdDetailView: View {
     let householdID: String
     @Bindable var model: HouseholdsModel
+    @Environment(\.dismiss) private var dismiss
 
     @State private var sharePresentation: SharePresentation?
     @State private var showAddFriends = false
-    @State private var inviteAfterAdd = false
-    @State private var addingChore = false
     @State private var choreToEdit: SharedChore?
+    @State private var confirmingLeave = false
 
     private var household: Household? {
         model.households.first { $0.id == householdID }
@@ -32,7 +32,8 @@ struct HouseholdDetailView: View {
         List {
             Section("Chores") {
                 if household.chores.isEmpty {
-                    Text("No chores yet. Tap + to add one.").font(.callout).foregroundStyle(.secondary)
+                    Text("Tasks assigned to this household show up here. Add one from the Tasks or To-Do tab and pick this household.")
+                        .font(.callout).foregroundStyle(.secondary)
                 } else {
                     ForEach(household.chores) { chore in
                         ChoreRow(chore: chore) {
@@ -48,43 +49,75 @@ struct HouseholdDetailView: View {
             }
 
             Section("Members") {
-                ForEach(household.members, id: \.self) { Text($0) }
+                ForEach(household.members) { member in
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(member.name)
+                        if member.isOwner && member.hasResolvedName {
+                            Text(member.isCurrentUser ? "Owner · You" : "Owner")
+                                .font(.caption).foregroundStyle(.secondary)
+                        } else if member.isCurrentUser {
+                            Text("You").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
+                    .swipeActions(edge: .trailing) {
+                        // The owner can remove any other member.
+                        if household.isOwner && !member.isOwner && !member.isCurrentUser {
+                            Button(role: .destructive) {
+                                model.removeMember(member, from: household)
+                            } label: { Label("Remove", systemImage: "person.fill.xmark") }
+                        }
+                    }
+                }
                 if household.isOwner {
                     Button { showAddFriends = true } label: {
-                        Label("Add from friends", systemImage: "person.2.badge.plus")
+                        Label("Invite friends", systemImage: "person.2.badge.plus")
                     }
                     Button { invite(household) } label: {
                         Label("Invite by link", systemImage: "link")
                     }
                 }
             }
+
+            Section {
+                NavigationLink {
+                    HouseholdHistoryView(householdID: household.id, model: model)
+                } label: {
+                    Label("Fairness & activity", systemImage: "chart.bar.xaxis")
+                }
+            }
+
+            Section {
+                Button(role: .destructive) { confirmingLeave = true } label: {
+                    Label(household.isOwner ? "Delete household" : "Leave household",
+                          systemImage: household.isOwner ? "trash" : "rectangle.portrait.and.arrow.right")
+                }
+            } footer: {
+                Text(household.isOwner
+                     ? "Deleting removes the household and its tasks for everyone."
+                     : "Leaving removes the household from your devices. The owner and other members keep it.")
+            }
         }
         .navigationTitle(household.name)
         .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { addingChore = true } label: { Image(systemName: "plus") }
-                    .accessibilityLabel("Add chore")
+        .confirmationDialog(household.isOwner ? "Delete this household for everyone?" : "Leave this household?",
+                            isPresented: $confirmingLeave, titleVisibility: .visible) {
+            Button(household.isOwner ? "Delete" : "Leave", role: .destructive) {
+                model.delete(household)
+                dismiss()
             }
-        }
-        .sheet(isPresented: $addingChore) {
-            HouseholdChoreEditView(members: household.members, existing: nil) { draft in
-                model.addChore(to: household, draft: draft)
-            }
+            Button("Cancel", role: .cancel) {}
         }
         .sheet(item: $choreToEdit) { chore in
-            HouseholdChoreEditView(members: household.members, existing: chore) { draft in
-                model.updateChore(chore, draft: draft, in: household)
+            if chore.isTodo {
+                TodoEditView(subject: .shared(household, chore))
+            } else {
+                NavigationStack { AddEditTaskView(shared: chore, in: household) }
             }
         }
-        .sheet(isPresented: $showAddFriends, onDismiss: {
-            if inviteAfterAdd { inviteAfterAdd = false; invite(household) }
-        }) {
-            AddFriendsToHouseholdView(onAdd: { friend in
-                await model.addFriend(friend, to: household)
-            }, onAdded: {
-                inviteAfterAdd = true
-            })
+        .sheet(isPresented: $showAddFriends) {
+            AddFriendsToHouseholdView { friend in
+                await model.invite(friend, to: household)
+            }
         }
     }
 
@@ -130,6 +163,10 @@ private struct ChoreRow: View {
                                 Text(chore.frequency.localizedDescription)
                                 if let assignee = chore.assignee {
                                     Text("· \(assignee)")
+                                }
+                                if chore.rotates {
+                                    Image(systemName: "arrow.triangle.2.circlepath")
+                                        .accessibilityLabel("Rotates between members")
                                 }
                             }
                         }

@@ -8,6 +8,7 @@ extension Logger {
     static let persistence = Logger(subsystem: subsystem, category: "persistence")
     static let social = Logger(subsystem: subsystem, category: "social")
     static let cloudkit = Logger(subsystem: subsystem, category: "cloudkit")
+    static let app = Logger(subsystem: subsystem, category: "app")
 }
 
 /// Holds the most recent user-facing error so the app can show a transient banner

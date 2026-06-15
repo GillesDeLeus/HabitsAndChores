@@ -64,7 +64,8 @@ final class TodoItem {
     var isDone: Bool = false
     var createdAt: Date = Date.now
     var completedAt: Date?
-    var dueDate: Date?
+    var dueDate: Date?              // deadline (when it must be done by)
+    var scheduledDate: Date?       // planned "do" day; surfaces in Today on that date
     var reminderModeRaw: Int = 0
     var reminderDate: Date?         // .atTime fire date, or .dailyUntilDone time-of-day
     var reminderOffset: Double = 0  // .beforeDue: seconds before the due date
@@ -117,6 +118,12 @@ final class TodoItem {
     var isOverdue: Bool {
         guard !isDone, let dueDate else { return false }
         return dueDate < .now
+    }
+
+    /// Open and scheduled for today or earlier — i.e. it should appear in Today.
+    func isScheduled(onOrBefore day: Date, calendar: Calendar = .current) -> Bool {
+        guard !isDone, let scheduledDate else { return false }
+        return calendar.startOfDay(for: scheduledDate) <= calendar.startOfDay(for: day)
     }
 
     func toggle() {

@@ -93,5 +93,66 @@ final class HouseholdOccurrenceTests: XCTestCase {
         XCTAssertEqual(draft.symbolName, "trash.fill")
         XCTAssertEqual(draft.assignee, "Sam")
         XCTAssertEqual(draft.frequency, .weekly(on: [3]))
+        XCTAssertFalse(draft.isTodo)
+    }
+
+    func testChoreDraftCopiesTodoFields() {
+        let due = date(2026, 6, 20, 9)
+        let remind = date(2026, 6, 19, 8)
+        let chore = SharedChore(id: "2", title: "Pay rent", details: "",
+                                kindRaw: TaskKind.chore.rawValue, categoryRaw: TaskCategory.finance.rawValue,
+                                frequency: .daily, symbolName: "creditcard.fill", colorHue: 0.2,
+                                createdAt: .now, assignee: "Alex", isDone: false, completedBy: nil,
+                                isTodo: true, dueDate: due, priorityRaw: TodoPriority.high.rawValue,
+                                reminderModeRaw: TodoReminderMode.atTime.rawValue, reminderDate: remind,
+                                reminderOffset: 0)
+        let draft = ChoreDraft(chore)
+        XCTAssertTrue(draft.isTodo)
+        XCTAssertEqual(draft.dueDate, due)
+        XCTAssertEqual(draft.priority, .high)
+        XCTAssertEqual(draft.todoReminderMode, .atTime)
+        XCTAssertEqual(draft.reminderDate, remind)
+        XCTAssertEqual(draft.assignee, "Alex")
+    }
+
+    // MARK: To-do vs recurring completion key
+
+    func testTodoOccurrenceUsesSentinel() {
+        let todo = SharedChore(id: "3", title: "X", details: "",
+                               kindRaw: TaskKind.chore.rawValue, categoryRaw: TaskCategory.other.rawValue,
+                               frequency: .daily, symbolName: "checklist", colorHue: 0.5,
+                               createdAt: .now, assignee: nil, isDone: false, completedBy: nil, isTodo: true)
+        XCTAssertEqual(HouseholdService.occurrence(for: todo), HouseholdService.todoOccurrence)
+    }
+
+    func testRecurringOccurrenceUsesFrequency() {
+        let chore = SharedChore(id: "4", title: "X", details: "",
+                                kindRaw: TaskKind.chore.rawValue, categoryRaw: TaskCategory.other.rawValue,
+                                frequency: .daily, symbolName: "checklist", colorHue: 0.5,
+                                createdAt: date(2026, 6, 1), assignee: nil, isDone: false, completedBy: nil)
+        let result = HouseholdService.occurrence(for: chore, asOf: date(2026, 6, 13, 14), calendar: cal)
+        XCTAssertEqual(result, date(2026, 6, 13))
+    }
+
+    // MARK: Rotation
+
+    func testRotationAdvancesOnCompletion() {
+        let names = ["Alex", "Bo", "Sam"]
+        XCTAssertEqual(HouseholdService.rotatedAssignee(names: names, current: "Alex", done: true), "Bo")
+        XCTAssertEqual(HouseholdService.rotatedAssignee(names: names, current: "Sam", done: true), "Alex") // wraps
+    }
+
+    func testRotationRetreatsOnUncompletion() {
+        let names = ["Alex", "Bo", "Sam"]
+        XCTAssertEqual(HouseholdService.rotatedAssignee(names: names, current: "Bo", done: false), "Alex")
+        XCTAssertEqual(HouseholdService.rotatedAssignee(names: names, current: "Alex", done: false), "Sam") // wraps
+        // Advance then retreat returns to the start (toggling is symmetric).
+        let advanced = HouseholdService.rotatedAssignee(names: names, current: "Bo", done: true)
+        XCTAssertEqual(HouseholdService.rotatedAssignee(names: names, current: advanced, done: false), "Bo")
+    }
+
+    func testRotationFromUnassignedAndEmpty() {
+        XCTAssertEqual(HouseholdService.rotatedAssignee(names: ["Alex", "Bo"], current: nil, done: true), "Alex")
+        XCTAssertNil(HouseholdService.rotatedAssignee(names: [], current: "Alex", done: true))
     }
 }

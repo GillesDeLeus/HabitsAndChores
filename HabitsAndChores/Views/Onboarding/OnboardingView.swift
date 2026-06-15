@@ -21,7 +21,7 @@ struct OnboardingView: View {
              tint: .accentColor,
              title: "Habits & Chores",
              message: "Track the things you want to do and the things you need to do — with flexible schedules, reminders, streaks, and a home-screen widget."),
-        Page(systemImage: "arrow.triangle.2.circlepath",
+        Page(systemImage: "repeat",
              tint: .green,
              title: "Two kinds of tasks",
              message: "Both repeat on a schedule you choose, and you check them off each day on the Today tab.",
@@ -32,11 +32,24 @@ struct OnboardingView: View {
         Page(systemImage: "books.vertical.fill",
              tint: .orange,
              title: "Start in seconds",
-             message: "Add ready-made habits and chores from the built-in template library, then make them your own. You can also add one-off items in the To-Do list."),
+             message: "Add ready-made habits and chores from the built-in template library, then make them your own.",
+             bullets: [
+                ("checklist", "Keep one-off tasks in the To-Do list."),
+                ("line.3.horizontal.decrease.circle", "Search, sort and filter your lists to find anything fast."),
+             ]),
         Page(systemImage: "person.2.fill",
              tint: .purple,
+             title: "Share & split chores",
+             message: "Create a household, then give any task a household and a person — it shows up in their lists too.",
+             bullets: [
+                ("person.crop.circle.badge.checkmark", "Assign a chore to one person, or leave it for anyone."),
+                ("arrow.triangle.2.circlepath", "Turn on rotation and a chore passes to the next member after each time it's done."),
+                ("person.2.badge.plus", "Invite friends right in the app — they get a notification and accept it there."),
+             ]),
+        Page(systemImage: "lock.fill",
+             tint: .blue,
              title: "Private by default",
-             message: "Your data stays on your device and in your iCloud. Optionally create an account to add friends, share a household, and split chores together."),
+             message: "Use the whole app without an account — your data stays on your device and in your own iCloud. An optional account adds friends and shared households; only tasks you put in a household are shared."),
     ]
 
     var body: some View {

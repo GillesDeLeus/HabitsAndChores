@@ -104,6 +104,100 @@ final class NotificationManager {
         center.removePendingNotificationRequests(withIdentifiers: ["todo-\(id.uuidString)"])
     }
 
+    // MARK: - Shared household tasks
+
+    private static let sharedPrefix = "shared-"
+
+    /// Cancels all shared-task reminders, then schedules them afresh for every
+    /// shared task that has a reminder. Idempotent, so it can run after each sync.
+    func rescheduleShared(_ chores: [SharedChore]) async {
+        await cancelAllShared()
+        for chore in chores where chore.hasReminder {
+            if chore.isTodo {
+                await scheduleSharedTodo(chore)
+            } else {
+                await scheduleSharedChore(chore)
+            }
+        }
+    }
+
+    private func cancelAllShared() async {
+        let requests = await center.pendingNotificationRequests()
+        let ids = requests.map(\.identifier).filter { $0.hasPrefix(Self.sharedPrefix) }
+        center.removePendingNotificationRequests(withIdentifiers: ids)
+    }
+
+    private func scheduleSharedChore(_ chore: SharedChore) async {
+        guard let hour = chore.reminderHour, let minute = chore.reminderMinute else { return }
+        let id = Self.sharedPrefix + chore.id
+        let rule = chore.frequency
+        switch rule.kind {
+        case .daily:
+            await addShared(id: id, suffix: "daily", title: chore.title, body: chore.details,
+                            components: DateComponents(hour: hour, minute: minute), repeats: true)
+        case .weekly:
+            for weekday in rule.weekdays {
+                await addShared(id: id, suffix: "wd\(weekday)", title: chore.title, body: chore.details,
+                                components: DateComponents(hour: hour, minute: minute, weekday: weekday), repeats: true)
+            }
+        case .monthly:
+            await addShared(id: id, suffix: "monthly", title: chore.title, body: chore.details,
+                            components: DateComponents(day: rule.dayOfMonth ?? 1, hour: hour, minute: minute), repeats: true)
+        case .everyN:
+            let cal = Calendar.current
+            let now = Date()
+            guard let end = cal.date(byAdding: .day, value: 120, to: now) else { return }
+            let occ = SchedulingEngine.occurrences(frequency: rule, anchor: chore.createdAt,
+                                                   in: DateInterval(start: now, end: end), calendar: cal)
+            for (idx, day) in occ.prefix(30).enumerated() {
+                var comps = cal.dateComponents([.year, .month, .day], from: day)
+                comps.hour = hour
+                comps.minute = minute
+                await addShared(id: id, suffix: "n\(idx)", title: chore.title, body: chore.details,
+                                components: comps, repeats: false)
+            }
+        }
+    }
+
+    private func scheduleSharedTodo(_ chore: SharedChore) async {
+        guard !chore.isDone else { return }
+        let cal = Calendar.current
+        let components: DateComponents
+        let repeats: Bool
+        switch chore.todoReminderMode {
+        case .none:
+            return
+        case .atTime:
+            guard let date = chore.reminderDate, date > .now else { return }
+            components = cal.dateComponents([.year, .month, .day, .hour, .minute], from: date)
+            repeats = false
+        case .beforeDue:
+            guard let due = chore.dueDate else { return }
+            let fire = due.addingTimeInterval(-chore.reminderOffset)
+            guard fire > .now else { return }
+            components = cal.dateComponents([.year, .month, .day, .hour, .minute], from: fire)
+            repeats = false
+        case .dailyUntilDone:
+            guard let time = chore.reminderDate else { return }
+            components = cal.dateComponents([.hour, .minute], from: time)
+            repeats = true
+        }
+        await addShared(id: Self.sharedPrefix + chore.id, suffix: "todo",
+                        title: String(localized: "To-Do"), body: chore.title,
+                        components: components, repeats: repeats)
+    }
+
+    private func addShared(id: String, suffix: String, title: String, body: String,
+                           components: DateComponents, repeats: Bool) async {
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body.isEmpty ? String(localized: "Time to get this done.") : body
+        content.sound = .default
+        let trigger = UNCalendarNotificationTrigger(dateMatching: components, repeats: repeats)
+        let request = UNNotificationRequest(identifier: "\(id)-\(suffix)", content: content, trigger: trigger)
+        try? await center.add(request)
+    }
+
     func cancel(taskID: UUID) {
         center.getPendingNotificationRequests { requests in
             let ids = requests.map(\.identifier).filter { $0.hasPrefix(taskID.uuidString) }

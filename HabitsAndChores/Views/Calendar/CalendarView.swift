@@ -103,12 +103,16 @@ struct CalendarView: View {
     }
 
     private func toggle(_ task: TaskItem, on day: Date) {
+        let wasDone = task.completion(on: day) != nil
         if let existing = task.completion(on: day) {
             context.delete(existing)
         } else {
             context.insert(Completion(scheduledDate: day, status: .done, task: task))
         }
-        context.saveOrReport()
+        if !wasDone { Haptics.tap() }   // instant tactile feedback, before persisting
+        // Persist off the tap's critical path so the row updates this frame instead
+        // of waiting on the synchronous (CloudKit-mirrored) save.
+        Task { @MainActor in context.saveOrReport() }
     }
 
     private func shiftMonth(_ delta: Int) {

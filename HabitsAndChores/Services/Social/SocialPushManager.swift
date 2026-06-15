@@ -20,36 +20,53 @@ enum SocialPushManager {
     private static func flagKey(for me: String) -> String { "social.subscribed.\(me)" }
 
     static func registerSubscription(for me: String) async {
-        // Saving is cheap but we avoid redundant round-trips once it's known to exist.
-        guard !UserDefaults.standard.bool(forKey: flagKey(for: me)) else { return }
+        // Incoming friend requests / acceptances (FriendEdge addressed to me).
+        await save(
+            subscription: CKQuerySubscription(
+                recordType: "FriendEdge",
+                predicate: NSPredicate(format: "other == %@", me),
+                subscriptionID: subscriptionID(for: me),
+                options: [.firesOnRecordCreation, .firesOnRecordUpdate]),
+            alert: String(localized: "You have new friend activity in Habits & Chores."),
+            flagKey: flagKey(for: me),
+            label: "friend")
 
-        let predicate = NSPredicate(format: "other == %@", me)
-        let subscription = CKQuerySubscription(
-            recordType: "FriendEdge",
-            predicate: predicate,
-            subscriptionID: subscriptionID(for: me),
-            options: [.firesOnRecordCreation, .firesOnRecordUpdate]
-        )
+        // Incoming household invitations (HouseholdInvite addressed to me).
+        await save(
+            subscription: CKQuerySubscription(
+                recordType: "HouseholdInvite",
+                predicate: NSPredicate(format: "invitee == %@", me),
+                subscriptionID: "household-invites-\(me)",
+                options: [.firesOnRecordCreation]),
+            alert: String(localized: "You’ve been invited to a household in Habits & Chores."),
+            flagKey: "household.invite.subscribed.\(me)",
+            label: "household-invite")
+    }
+
+    /// Saves a query subscription once, guarded by a UserDefaults flag.
+    private static func save(subscription: CKQuerySubscription, alert: String,
+                             flagKey: String, label: String) async {
+        guard !UserDefaults.standard.bool(forKey: flagKey) else { return }
         let info = CKSubscription.NotificationInfo()
-        info.alertBody = String(localized: "You have new friend activity in Habits & Chores.")
+        info.alertBody = alert
         info.soundName = "default"
         info.shouldBadge = true
         info.shouldSendContentAvailable = true   // also wake the app to refresh
         subscription.notificationInfo = info
-
         do {
             _ = try await database.save(subscription)
-            UserDefaults.standard.set(true, forKey: flagKey(for: me))
+            UserDefaults.standard.set(true, forKey: flagKey)
         } catch let error as CKError where error.code == .serverRejectedRequest {
-            // Already exists on the server — treat as success.
-            UserDefaults.standard.set(true, forKey: flagKey(for: me))
+            UserDefaults.standard.set(true, forKey: flagKey)   // already exists
         } catch {
-            Logger.cloudkit.error("friend subscription registration failed: \(error.localizedDescription, privacy: .public)")
+            Logger.cloudkit.error("\(label, privacy: .public) subscription registration failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 
     static func removeSubscription(for me: String) async {
         _ = try? await database.deleteSubscription(withID: subscriptionID(for: me))
+        _ = try? await database.deleteSubscription(withID: "household-invites-\(me)")
         UserDefaults.standard.removeObject(forKey: flagKey(for: me))
+        UserDefaults.standard.removeObject(forKey: "household.invite.subscribed.\(me)")
     }
 }

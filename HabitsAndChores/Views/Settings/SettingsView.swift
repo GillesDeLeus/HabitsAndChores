@@ -3,8 +3,14 @@ import SwiftData
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
-    @AppStorage("appLanguage") private var appLanguage = "en"
+    @Environment(LanguageManager.self) private var language
     @AppStorage("appAppearance") private var appearance = "system"
+
+    /// Supported in-app languages (code, autonym). "system" follows the device.
+    private let languages: [(code: String, name: String)] = [
+        ("system", String(localized: "System")), ("en", "English"), ("fr", "Français"),
+        ("nl", "Nederlands"), ("it", "Italiano"), ("pl", "Polski"), ("es", "Español"), ("de", "Deutsch"),
+    ]
     #if DEBUG
     @State private var devAlert: String?
     #endif
@@ -15,11 +21,11 @@ struct SettingsView: View {
                 AccountSection()
 
                 Section(header: Text("Language")) {
-                    Picker("Language", selection: $appLanguage) {
-                        Text("English").tag("en")
-                        // Additional languages can be added here as the catalog grows.
+                    Picker("Language", selection: Binding(get: { language.code },
+                                                          set: { language.code = $0 })) {
+                        ForEach(languages, id: \.code) { Text($0.name).tag($0.code) }
                     }
-                    Text("More languages are coming soon.")
+                    Text("Applies immediately. “System” follows your device language.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
 
@@ -120,4 +126,6 @@ struct SettingsView: View {
 #Preview {
     SettingsView()
         .environment(SocialAccount())
+        .environment(HouseholdsModel())
+        .environment(LanguageManager())
 }

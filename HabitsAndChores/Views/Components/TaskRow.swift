@@ -27,7 +27,9 @@ struct TaskRow: View {
 
             Spacer()
 
-            let streak = SchedulingEngine.currentStreak(for: task)
+            // Streak as of the row's day (not always "now"), so the calendar shows the
+            // streak for the day you're viewing rather than a today-relative number.
+            let streak = SchedulingEngine.currentStreak(for: task, asOf: day)
             if streak > 1 {
                 Label("\(streak)", systemImage: "flame.fill")
                     .font(.caption.bold())

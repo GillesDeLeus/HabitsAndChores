@@ -31,7 +31,10 @@ struct TodayProvider: TimelineProvider {
         let today = calendar.startOfDay(for: .now)
         do {
             let schema = Schema([TaskItem.self, Completion.self, TodoItem.self])
-            let config = ModelConfiguration(schema: schema, cloudKitDatabase: .automatic)
+            // Same App Group container as the app, so we read the app's data.
+            let config = ModelConfiguration(schema: schema,
+                                            groupContainer: .identifier(AppGroup.id),
+                                            cloudKitDatabase: .automatic)
             let container = try ModelContainer(for: schema, configurations: config)
             let context = ModelContext(container)
             let all = try context.fetch(FetchDescriptor<TaskItem>())

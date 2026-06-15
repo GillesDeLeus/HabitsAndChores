@@ -14,6 +14,10 @@ settings:
     CODE_SIGN_STYLE: Automatic
     GENERATE_INFOPLIST_FILE: YES
     ENABLE_USER_SCRIPT_SANDBOXING: YES
+    SWIFT_EMIT_LOC_STRINGS: YES
+    # Localizations the app advertises (drives the String Catalog + per-app language).
+    INFOPLIST_KEY_CFBundleLocalizations: "en fr nl it pl es de"
+    LOCALIZATION_PREFERS_STRING_CATALOGS: YES
 
 targets:
   HabitsAndChores:

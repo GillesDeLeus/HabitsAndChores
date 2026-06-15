@@ -42,6 +42,35 @@ enum SchedulingEngine {
                        anchor: calendar.startOfDay(for: task.startDate), calendar: calendar)
     }
 
+    /// Whether a rule with the given anchor (start date) is scheduled on `day`.
+    /// Used for shared household chores, which aren't `TaskItem`s.
+    static func isScheduled(frequency: FrequencyRule, anchor: Date, on day: Date,
+                            calendar: Calendar = .current) -> Bool {
+        let normalized = calendar.startOfDay(for: day)
+        let anchorDay = calendar.startOfDay(for: anchor)
+        guard normalized >= anchorDay else { return false }
+        return matches(rule: frequency, day: normalized, anchor: anchorDay, calendar: calendar)
+    }
+
+    /// Occurrence dates for a bare rule+anchor within `interval` (inclusive).
+    static func occurrences(frequency: FrequencyRule, anchor: Date, in interval: DateInterval,
+                            calendar: Calendar = .current) -> [Date] {
+        let anchorDay = calendar.startOfDay(for: anchor)
+        let start = calendar.startOfDay(for: max(anchorDay, interval.start))
+        let end = calendar.startOfDay(for: interval.end)
+        guard start <= end else { return [] }
+        var result: [Date] = []
+        var day = start
+        while day <= end {
+            if matches(rule: frequency, day: day, anchor: anchorDay, calendar: calendar) {
+                result.append(day)
+            }
+            guard let next = calendar.date(byAdding: .day, value: 1, to: day) else { break }
+            day = next
+        }
+        return result
+    }
+
     // MARK: - Rule matching
 
     private static func matches(rule: FrequencyRule, day: Date, anchor: Date, calendar: Calendar) -> Bool {
