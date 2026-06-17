@@ -38,9 +38,14 @@ struct TodayProvider: TimelineProvider {
             let container = try ModelContainer(for: schema, configurations: config)
             let context = ModelContext(container)
             let all = try context.fetch(FetchDescriptor<TaskItem>())
-            let due = all.filter { !$0.isArchived && SchedulingEngine.isScheduled($0, on: today) }
-            let done = due.filter { $0.isCompleted(on: today) }.count
-            let upcoming = due.filter { !$0.isCompleted(on: today) }.prefix(3).map(\.title)
+            // Day-scheduled tasks due today + floating tasks outstanding this period
+            // (or completed today). Same rule as the Today screen.
+            let due = all.filter { SchedulingEngine.belongsInToday($0, on: today) }
+            func isDoneToday(_ task: TaskItem) -> Bool {
+                task.isCompleted(on: SchedulingEngine.occurrenceDate(for: task, on: today) ?? today)
+            }
+            let done = due.filter(isDoneToday).count
+            let upcoming = due.filter { !isDoneToday($0) }.prefix(3).map(\.title)
             return TodayEntry(date: .now, total: due.count, completed: done, upcoming: Array(upcoming))
         } catch {
             return TodayEntry(date: .now, total: 0, completed: 0, upcoming: [])

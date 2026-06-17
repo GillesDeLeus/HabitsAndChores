@@ -155,4 +155,24 @@ final class HouseholdOccurrenceTests: XCTestCase {
         XCTAssertEqual(HouseholdService.rotatedAssignee(names: ["Alex", "Bo"], current: nil, done: true), "Alex")
         XCTAssertNil(HouseholdService.rotatedAssignee(names: [], current: "Alex", done: true))
     }
+
+    // MARK: Today visibility (mine / unassigned / just-completed)
+
+    func testMineForTodayShowsMineAndUnassigned() {
+        XCTAssertTrue(HouseholdService.isMineForToday(assignee: "Alex", isDone: false, completedBy: nil, myName: "Alex"))
+        XCTAssertTrue(HouseholdService.isMineForToday(assignee: nil, isDone: false, completedBy: nil, myName: "Alex"),
+                      "unassigned chores are up for grabs")
+        XCTAssertFalse(HouseholdService.isMineForToday(assignee: "Bo", isDone: false, completedBy: nil, myName: "Alex"),
+                       "someone else's open chore isn't on my Today")
+    }
+
+    func testMineForTodayLingersForAChoreIJustCompletedAfterRotation() {
+        // A rotating chore I completed: assignee has already rotated to Bo, but I'm
+        // the completer for this occurrence, so it stays on my Today (struck through).
+        XCTAssertTrue(HouseholdService.isMineForToday(assignee: "Bo", isDone: true, completedBy: "Alex", myName: "Alex"))
+        // Once the occurrence resets (isDone false) it's no longer mine — it's Bo's.
+        XCTAssertFalse(HouseholdService.isMineForToday(assignee: "Bo", isDone: false, completedBy: nil, myName: "Alex"))
+        // A chore someone *else* completed doesn't show on my Today via this clause.
+        XCTAssertFalse(HouseholdService.isMineForToday(assignee: "Sam", isDone: true, completedBy: "Bo", myName: "Alex"))
+    }
 }

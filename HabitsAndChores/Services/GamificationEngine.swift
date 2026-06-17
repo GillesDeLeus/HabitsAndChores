@@ -43,9 +43,28 @@ enum GamificationEngine {
         var s = Summary()
         let today = calendar.startOfDay(for: now)
 
-        // Per-completion aggregation.
+        // Weekly-goal span (start of this week through today, so future days aren't
+        // "missed") and the 16 prior full-week spans for the perfect-week count.
+        let thisWeek = calendar.dateInterval(of: .weekOfYear, for: today)
+        let weekSpan = thisWeek.map { DateInterval(start: $0.start, end: today) }
+        var perfectSpans: [DateInterval] = []
+        if let thisWeek {
+            for offset in 1...16 {
+                guard let dayInWeek = calendar.date(byAdding: .weekOfYear, value: -offset, to: thisWeek.start),
+                      let week = calendar.dateInterval(of: .weekOfYear, for: dayInWeek) else { continue }
+                let end = calendar.date(byAdding: .day, value: -1, to: week.end) ?? week.end
+                perfectSpans.append(DateInterval(start: week.start, end: end))
+            }
+        }
+        var weekScheduled = [Int](repeating: 0, count: perfectSpans.count)
+        var weekDone = [Int](repeating: 0, count: perfectSpans.count)
         var categoriesWithDone: Set<String> = []
+
+        // One pass per task: build its completion index once, then reuse it for the
+        // per-completion aggregation, both streaks, the weekly goal, and perfect weeks.
         for task in tasks where !task.isArchived {
+            let index = CompletionIndex(task.completions ?? [], calendar: calendar)
+
             for c in (task.completions ?? []) where c.status == .done {
                 s.totalCompleted += 1
                 switch task.kind {
@@ -55,10 +74,27 @@ enum GamificationEngine {
                 categoriesWithDone.insert(task.categoryRaw)
                 if calendar.component(.hour, from: c.loggedAt) < 9 { s.earlyBirdCount += 1 }
             }
-            s.longestStreak = max(s.longestStreak, SchedulingEngine.longestStreak(for: task, asOf: now, calendar: calendar))
-            s.bestCurrentStreak = max(s.bestCurrentStreak, SchedulingEngine.currentStreak(for: task, asOf: now, calendar: calendar))
+
+            s.longestStreak = max(s.longestStreak, SchedulingEngine.longestStreak(for: task, index: index, asOf: now, calendar: calendar))
+            s.bestCurrentStreak = max(s.bestCurrentStreak, SchedulingEngine.currentStreak(for: task, index: index, asOf: now, calendar: calendar))
+
+            if let weekSpan {
+                let occ = SchedulingEngine.occurrences(for: task, in: weekSpan, calendar: calendar)
+                s.scheduledThisWeek += occ.count
+                s.completedThisWeek += occ.filter { index.isDone($0) }.count
+            }
+
+            for (i, span) in perfectSpans.enumerated() {
+                let occ = SchedulingEngine.occurrences(for: task, in: span, calendar: calendar)
+                weekScheduled[i] += occ.count
+                weekDone[i] += occ.filter { index.isDone($0) }.count
+            }
         }
+
         s.distinctCategories = categoriesWithDone.count
+        s.weeklyProgress = s.scheduledThisWeek == 0 ? 0 : Double(s.completedThisWeek) / Double(s.scheduledThisWeek)
+        // A perfect week: at least one scheduled occurrence, all of them done.
+        s.perfectWeekCount = zip(weekScheduled, weekDone).filter { $0 > 0 && $0 == $1 }.count
 
         // Points & level.
         s.totalPoints = s.totalCompleted * pointsPerCompletion
@@ -71,39 +107,7 @@ enum GamificationEngine {
         s.pointsToNextLevel = max(0, next - s.totalPoints)
         s.levelProgress = min(1, Double(s.xpIntoLevel) / Double(s.xpForLevelSpan))
 
-        // Weekly goal (start of this week through today, so future days aren't "missed").
-        if let week = calendar.dateInterval(of: .weekOfYear, for: today) {
-            let span = DateInterval(start: week.start, end: today)
-            for task in tasks where !task.isArchived {
-                let occ = SchedulingEngine.occurrences(for: task, in: span, calendar: calendar)
-                s.scheduledThisWeek += occ.count
-                s.completedThisWeek += occ.filter { task.isCompleted(on: $0, calendar: calendar) }.count
-            }
-            s.weeklyProgress = s.scheduledThisWeek == 0 ? 0 : Double(s.completedThisWeek) / Double(s.scheduledThisWeek)
-        }
-
-        s.perfectWeekCount = Self.perfectWeekCount(tasks: tasks, asOf: today, calendar: calendar)
         return s
-    }
-
-    /// Counts fully-elapsed calendar weeks (within the last 16) in which every
-    /// scheduled occurrence (at least one) was completed.
-    private static func perfectWeekCount(tasks: [TaskItem], asOf today: Date, calendar: Calendar) -> Int {
-        guard let thisWeek = calendar.dateInterval(of: .weekOfYear, for: today) else { return 0 }
-        var count = 0
-        for offset in 1...16 {
-            guard let dayInWeek = calendar.date(byAdding: .weekOfYear, value: -offset, to: thisWeek.start),
-                  let week = calendar.dateInterval(of: .weekOfYear, for: dayInWeek) else { continue }
-            let span = DateInterval(start: week.start, end: calendar.date(byAdding: .day, value: -1, to: week.end) ?? week.end)
-            var scheduled = 0, done = 0
-            for task in tasks where !task.isArchived {
-                let occ = SchedulingEngine.occurrences(for: task, in: span, calendar: calendar)
-                scheduled += occ.count
-                done += occ.filter { task.isCompleted(on: $0, calendar: calendar) }.count
-            }
-            if scheduled > 0 && done == scheduled { count += 1 }
-        }
-        return count
     }
 
     // MARK: - Level math

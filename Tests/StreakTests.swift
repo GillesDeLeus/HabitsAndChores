@@ -25,6 +25,36 @@ final class StreakTests: XCTestCase {
         ctx.insert(Completion(scheduledDate: day, status: .done, task: task))
     }
 
+    private func addSkipped(_ task: TaskItem, daysAgo: Int, in ctx: ModelContext) {
+        let day = cal.date(byAdding: .day, value: -daysAgo, to: cal.startOfDay(for: .now))!
+        ctx.insert(Completion(scheduledDate: day, status: .skipped, task: task))
+    }
+
+    /// A skipped day is neutral: it neither extends nor breaks the run, so a done
+    /// day on either side of a skip stays connected. Guards the `CompletionIndex`
+    /// refactor, which recomputed done/skipped as separate sets.
+    func testSkippedDayIsNeutralInStreak() throws {
+        let ctx = try context()
+        let task = dailyTask(in: ctx)
+        addDone(task, daysAgo: 0, in: ctx)
+        addSkipped(task, daysAgo: 1, in: ctx)   // neutral
+        addDone(task, daysAgo: 2, in: ctx)
+        try ctx.save()
+        XCTAssertEqual(SchedulingEngine.currentStreak(for: task), 2,
+                       "two done days bridged by a skip count as a streak of 2")
+    }
+
+    /// When a day has both a done and a skipped completion, done wins (matches the
+    /// previous `isCompleted`-first ordering).
+    func testDoneWinsOverSkippedOnSameDay() throws {
+        let ctx = try context()
+        let task = dailyTask(in: ctx)
+        addSkipped(task, daysAgo: 0, in: ctx)
+        addDone(task, daysAgo: 0, in: ctx)
+        try ctx.save()
+        XCTAssertEqual(SchedulingEngine.currentStreak(for: task), 1)
+    }
+
     func testCurrentStreakCountsConsecutiveDays() throws {
         let ctx = try context()
         let task = dailyTask(in: ctx)

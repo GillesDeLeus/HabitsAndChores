@@ -94,14 +94,29 @@ struct AddEditTaskView: View {
                 }
             }
 
-            Section(header: Text("Frequency")) {
+            Section {
+                // All options are always present — a conditionally-included `tag`
+                // makes a Form `Picker` drop selections (the cause of floating not
+                // being selectable on existing tasks). "Anytime" is private-only, so
+                // it's coerced to weekly/monthly at save time when a household is set.
                 Picker("Repeats", selection: $freqKind) {
                     Text("Daily").tag(FrequencyRule.Kind.daily)
                     Text("Weekly").tag(FrequencyRule.Kind.weekly)
                     Text("Monthly").tag(FrequencyRule.Kind.monthly)
                     Text("Every N").tag(FrequencyRule.Kind.everyN)
+                    Text("Anytime").tag(FrequencyRule.Kind.floating)
                 }
                 frequencyDetail
+            } header: {
+                Text("Frequency")
+            } footer: {
+                if freqKind == .floating {
+                    if householdID == nil {
+                        Text("No fixed day — it stays in Today every day until you complete it once this \(unit == .month ? "month" : "week").")
+                    } else {
+                        Text("“Anytime” isn't available for shared tasks yet — this will be saved as a fixed \(unit == .month ? "monthly" : "weekly") chore.")
+                    }
+                }
             }
 
             Section(header: Text("Reminder")) {
@@ -157,6 +172,22 @@ struct AddEditTaskView: View {
             }
         }
         .onAppear(perform: loadIfNeeded)
+        .onChange(of: freqKind) { _, new in
+            // A floating rule only makes sense per week/month; default a stale `.day`.
+            if new == .floating, unit == .day { unit = .week }
+        }
+        .onChange(of: householdID) { _, new in
+            // Floating is private-only for now; moving to a household maps it to the
+            // nearest fixed-day rule so the picker has a valid selection.
+            if new != nil, freqKind == .floating {
+                if unit == .month {
+                    freqKind = .monthly
+                } else {
+                    freqKind = .weekly
+                    if weekdays.isEmpty { weekdays = [Calendar.current.component(.weekday, from: .now)] }
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -176,6 +207,12 @@ struct AddEditTaskView: View {
                 Text("Months").tag(FrequencyRule.Unit.month)
             }
             .pickerStyle(.segmented)
+        case .floating:
+            Picker("Period", selection: $unit) {
+                Text("Once a week").tag(FrequencyRule.Unit.week)
+                Text("Once a month").tag(FrequencyRule.Unit.month)
+            }
+            .pickerStyle(.segmented)
         }
     }
 
@@ -183,10 +220,19 @@ struct AddEditTaskView: View {
 
     private func buildFrequency() -> FrequencyRule {
         switch freqKind {
-        case .daily:   return .daily
-        case .weekly:  return .weekly(on: Array(weekdays))
-        case .monthly: return .monthly(day: dayOfMonth)
-        case .everyN:  return .every(interval, unit)
+        case .daily:    return .daily
+        case .weekly:   return .weekly(on: Array(weekdays))
+        case .monthly:  return .monthly(day: dayOfMonth)
+        case .everyN:   return .every(interval, unit)
+        case .floating:
+            // Floating is private-only for now; if this is destined for a household,
+            // map it to the nearest fixed-day rule.
+            guard householdID == nil else {
+                return unit == .month
+                    ? .monthly(day: dayOfMonth)
+                    : .weekly(on: weekdays.isEmpty ? [Calendar.current.component(.weekday, from: .now)] : Array(weekdays))
+            }
+            return .floating(unit)
         }
     }
 
