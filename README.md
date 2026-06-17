@@ -17,7 +17,7 @@ households, iCloud sync, and a home-screen widget.
 ## Getting started
 
 This repo contains source only. The `.xcodeproj` is generated with
-[XcodeGen](https://github.com/yonyz/XcodeGen) so the project file never has to be
+[XcodeGen](https://github.com/yonaskolb/XcodeGen) so the project file never has to be
 hand-merged.
 
 ```bash
@@ -70,7 +70,7 @@ HabitsAndChores/
 │   └── Components/       Reusable rows (TaskRow, SharedTaskRow, …)
 └── Resources/
     ├── Templates.json    ~30 built-in habits & chores
-    └── Localizable.xcstrings  String Catalog (English; ready for more languages)
+    └── Localizable.xcstrings  String Catalog (ships in 7 languages — see below)
 
 HabitsAndChoresWidget/    WidgetKit "Today" widget (reads the shared local store)
 ```
@@ -87,8 +87,14 @@ HabitsAndChoresWidget/    WidgetKit "Today" widget (reads the shared local store
   `TaskItem` (`createdFromTemplateID` tracks origin) so edits never mutate the
   library.
 - **Localization-first.** All user-facing strings go through `String(localized:)`
-  / the String Catalog. Only English ships now; adding a language is a
-  translation task with no code changes.
+  / the String Catalog (ships in seven languages — see below); adding another is
+  a translation task with no code changes.
+- **Recurrence covers fixed *and* floating schedules.** Beyond daily / specific
+  weekdays / day-of-month / every-N, the **"Anytime"** mode is due *once within a
+  period* (e.g. once a week or month) with no fixed day: it stays outstanding in
+  Today all period until done once, while the calendar and stats show a single
+  occurrence per period. Streaks count periods, so an in-progress period never
+  breaks a run.
 - **Private vs. shared is a field, not a separate screen.** Every task/to-do
   editor has a `Household` picker: *Private* stores a local SwiftData object
   (mirrored only to your own devices); choosing a household writes a `SharedChore`
@@ -98,19 +104,31 @@ HabitsAndChoresWidget/    WidgetKit "Today" widget (reads the shared local store
 ## Localization
 
 Ships in **English, French, Dutch, Italian, Polish, Spanish and German** (String
-Catalog). Settings → Language offers System + each language (in-app override via
-`AppleLanguages`, applied on next launch). Notes:
+Catalog). Settings → Language offers System + each language; the choice applies
+**live, with no relaunch** — `LanguageManager` swizzles `Bundle.main` to resolve
+strings from the chosen `.lproj` immediately (it does *not* use `AppleLanguages`).
+Notes:
 
-- The catalog's established UI strings are translated; strings added since the
-  catalog was last extracted in Xcode need an Xcode build (to extract them) then
-  translation. Run `/tmp`-style extraction or open the project in Xcode to refresh.
-- Translations are a first machine-assisted pass and should get **native review**
-  before store submission. `Templates.json` content (`titleKey`/`detailsKey`) is
-  not yet translated.
+- **Coverage is complete:** every non-stale catalog key is translated in all seven
+  languages, including the built-in template titles/details (`Templates.json`'s
+  `titleKey`/`detailsKey`, which are added to the catalog manually because their
+  runtime-variable lookup is invisible to Xcode's extractor).
+- Translations are a **machine-generated first pass** and should get **native
+  review** before store submission — coverage is guaranteed, idiomatic quality is
+  not (plurals, especially Polish, are simplified).
+- Re-running a machine pass / adding strings: edit the translation map and apply it
+  with `scripts/merge_translations.py`. `Tests/LocalizationCoverageTests.swift`
+  fails CI if any advertised language is left untranslated.
+- **The legal screens are intentionally English-only.** The Privacy Policy and
+  Terms & Community Guidelines bodies (`PrivacyPolicyView` / `TermsView`, mirroring
+  `PRIVACY.md` / `TERMS.md`) render verbatim and are *not* in the catalog — machine-
+  translated legal text is a liability, and Apple does not require a localized
+  policy. Only the chrome (navigation titles, section headers, "Last updated") is
+  localized. Translate the bodies only with native legal review.
 
 ## Roadmap ideas (not yet built)
 
 - Apple Watch companion
 - EventKit export to the system Calendar
-- Per-language native translation review; translate the built-in templates
+- Native (human) review of the machine-generated translations before submission
 ```
