@@ -5,7 +5,7 @@ import SwiftUI
 struct TermsView: View {
     private struct Item: Identifiable { let id = UUID(); let title: String; let body: String }
 
-    private let updated = "13 June 2026"
+    private let updated = "14 June 2026"
     private let intro = "These terms apply when you create an account and use the social features. Using the app without an account does not require agreement to the social terms below."
 
     private let items: [Item] = [
@@ -27,8 +27,10 @@ struct TermsView: View {
                 Text(intro).font(.callout).foregroundStyle(.secondary)
                 ForEach(items) { item in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title).font(.headline)
-                        Text(item.body).font(.callout).foregroundStyle(.secondary)
+                        // Section headers are localized (chrome); the legal bodies
+                        // stay verbatim English on purpose — see PRIVACY/TERMS.md.
+                        Text(LocalizedStringKey(item.title)).font(.headline)
+                        Text(verbatim: item.body).font(.callout).foregroundStyle(.secondary)
                     }
                 }
                 Text("Last updated: \(updated)").font(.caption).foregroundStyle(.tertiary).padding(.top, 4)

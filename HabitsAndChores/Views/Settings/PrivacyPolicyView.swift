@@ -4,7 +4,7 @@ import SwiftUI
 struct PrivacyPolicyView: View {
     private struct Item: Identifiable { let id = UUID(); let title: String; let body: String }
 
-    private let updated = "13 June 2026"
+    private let updated = "14 June 2026"
     private let intro = "Habits & Chores is private by default. You can use the app fully without an account, and in that case your data never leaves your own devices and iCloud account."
 
     private let items: [Item] = [
@@ -37,8 +37,10 @@ struct PrivacyPolicyView: View {
 
                 ForEach(items) { item in
                     VStack(alignment: .leading, spacing: 4) {
-                        Text(item.title).font(.headline)
-                        Text(item.body).font(.callout).foregroundStyle(.secondary)
+                        // Section headers are localized (chrome); the legal bodies
+                        // stay verbatim English on purpose — see PRIVACY/TERMS.md.
+                        Text(LocalizedStringKey(item.title)).font(.headline)
+                        Text(verbatim: item.body).font(.callout).foregroundStyle(.secondary)
                     }
                 }
 
