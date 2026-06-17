@@ -45,6 +45,8 @@ struct RootTabView: View {
             // Returning users (onboarding already done): ask for notifications here
             // rather than over the first-run onboarding.
             if onboardingComplete { await NotificationManager.shared.requestAuthorizationIfNeeded() }
+            // Refresh reminders so the finite `.everyN` one-shot window is topped up.
+            await NotificationManager.shared.rescheduleAll(tasks)
         }
         .task(id: account.userID) {
             if let me = account.userID {

@@ -3,6 +3,7 @@ import SwiftData
 
 struct CalendarView: View {
     @Environment(\.modelContext) private var context
+    @Environment(HouseholdsModel.self) private var households
     @Query(filter: #Predicate<TaskItem> { !$0.isArchived })
     private var tasks: [TaskItem]
 
@@ -61,8 +62,9 @@ struct CalendarView: View {
                         date: date,
                         isSelected: calendar.isDate(date, inSameDayAs: selectedDay),
                         isToday: calendar.isDateInToday(date),
-                        scheduledCount: scheduledTasks(on: date).count,
+                        scheduledCount: scheduledTasks(on: date).count + sharedChores(on: date).count,
                         completedCount: scheduledTasks(on: date).filter { $0.isCompleted(on: date) }.count
+                            + sharedCompletedCount(on: date)
                     )
                     .onTapGesture { selectedDay = date }
                 } else {
@@ -77,11 +79,13 @@ struct CalendarView: View {
 
     private var dayDetail: some View {
         let items = scheduledTasks(on: selectedDay)
+        let shared = sharedChores(on: selectedDay)
+        let isToday = calendar.isDateInToday(selectedDay)
         return VStack(alignment: .leading, spacing: 8) {
             Text(selectedDay.formatted(.dateTime.weekday(.wide).month().day()))
                 .font(.headline)
                 .padding(.horizontal)
-            if items.isEmpty {
+            if items.isEmpty && shared.isEmpty {
                 Text("Nothing scheduled.")
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
@@ -90,6 +94,20 @@ struct CalendarView: View {
                     TaskRow(task: task, day: selectedDay, toggle: { toggle(task, on: selectedDay) })
                         .padding(.horizontal)
                         .padding(.vertical, 4)
+                }
+                // A shared chore's `isDone` only reflects its *current* occurrence, so
+                // it's only shown (and toggleable) as done on today; other cells show
+                // it as scheduled-but-not-done to avoid a completed daily chore looking
+                // done on every day.
+                ForEach(shared, id: \.chore.id) { item in
+                    SharedTaskRow(chore: displayChore(item.chore, on: selectedDay),
+                                  householdName: item.household.name) {
+                        guard isToday else { return }
+                        households.setDone(item.chore, in: item.household, !item.chore.isDone)
+                        Haptics.tap()
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 4)
                 }
             }
         }
@@ -100,6 +118,33 @@ struct CalendarView: View {
 
     private func scheduledTasks(on day: Date) -> [TaskItem] {
         tasks.filter { SchedulingEngine.isScheduled($0, on: day) }
+    }
+
+    /// Shared household chores (the whole household, like the Tasks list) scheduled on
+    /// `day`. The calendar is personal-only otherwise, so without this a user whose
+    /// tasks live in a household sees an empty calendar.
+    private func sharedChores(on day: Date) -> [(household: Household, chore: SharedChore)] {
+        households.sharedTasks(isTodo: false, .all).filter {
+            SchedulingEngine.isScheduled(frequency: $0.chore.frequency, anchor: $0.chore.createdAt, on: day)
+        }
+    }
+
+    /// A shared chore's `isDone` only reflects its current occurrence, so it's only a
+    /// meaningful "completed" signal on today; past/future cells show it as scheduled.
+    private func sharedCompletedCount(on day: Date) -> Int {
+        guard calendar.isDateInToday(day) else { return 0 }
+        return sharedChores(on: day).filter { $0.chore.isDone }.count
+    }
+
+    /// The chore as it should display on `day`: its real done-state on today, but
+    /// forced not-done on other days (we don't load shared per-occurrence history, so
+    /// the current `isDone` would otherwise paint every day as completed).
+    private func displayChore(_ chore: SharedChore, on day: Date) -> SharedChore {
+        guard !calendar.isDateInToday(day) else { return chore }
+        var copy = chore
+        copy.isDone = false
+        copy.completedBy = nil
+        return copy
     }
 
     private func toggle(_ task: TaskItem, on day: Date) {
@@ -180,4 +225,5 @@ private struct DayCell: View {
 #Preview {
     NavigationStack { CalendarView() }
         .modelContainer(PreviewData.container)
+        .environment(HouseholdsModel())
 }

@@ -14,9 +14,18 @@ final class NotificationManager {
         _ = try? await center.requestAuthorization(options: [.alert, .sound, .badge])
     }
 
+    /// (Re)schedules reminders for every task. Call on launch / foreground so the
+    /// finite rolling window of `.everyN` one-shot triggers is refreshed before it
+    /// runs out (otherwise those reminders silently stop until the task is edited).
+    func rescheduleAll(_ tasks: [TaskItem]) async {
+        for task in tasks { await reschedule(for: task) }
+    }
+
     /// (Re)schedules reminders for a single task. Removes any prior requests for it first.
     func reschedule(for task: TaskItem) async {
-        cancel(taskID: task.id)
+        // Await the cancellation before re-adding so a slow removal can't race ahead
+        // and wipe the freshly-scheduled requests, leaving duplicates or none.
+        await cancelPending(taskID: task.id)
         guard task.hasReminder, !task.isArchived,
               let hour = task.reminderHour, let minute = task.reminderMinute else { return }
 
@@ -44,9 +53,11 @@ final class NotificationManager {
             await add(taskID: task.id, title: task.title, body: task.details,
                       dateComponents: comps, repeats: true, suffix: "monthly")
 
-        case .everyN:
-            // Calendar triggers can't express arbitrary N-day intervals. Schedule a
-            // rolling window of the next 30 occurrences as one-shot triggers.
+        case .everyN, .floating:
+            // Calendar triggers can't express arbitrary N-day intervals (and a floating
+            // task has no fixed weekday). Schedule a rolling window of the next 30
+            // occurrences as one-shot triggers — for floating these are the period
+            // starts (each week/month), nudging at the chosen time.
             let cal = Calendar.current
             let now = Date()
             guard let end = cal.date(byAdding: .day, value: 120, to: now) else { return }
@@ -143,7 +154,7 @@ final class NotificationManager {
         case .monthly:
             await addShared(id: id, suffix: "monthly", title: chore.title, body: chore.details,
                             components: DateComponents(day: rule.dayOfMonth ?? 1, hour: hour, minute: minute), repeats: true)
-        case .everyN:
+        case .everyN, .floating:
             let cal = Calendar.current
             let now = Date()
             guard let end = cal.date(byAdding: .day, value: 120, to: now) else { return }
@@ -198,11 +209,21 @@ final class NotificationManager {
         try? await center.add(request)
     }
 
+    /// Fire-and-forget cancellation, for callers (archive/delete swipes) that don't
+    /// immediately re-add and so don't care about ordering.
     func cancel(taskID: UUID) {
         center.getPendingNotificationRequests { requests in
             let ids = requests.map(\.identifier).filter { $0.hasPrefix(taskID.uuidString) }
             self.center.removePendingNotificationRequests(withIdentifiers: ids)
         }
+    }
+
+    /// Awaitable cancellation, used by `reschedule(for:)` so the removal completes
+    /// before new requests are added.
+    private func cancelPending(taskID: UUID) async {
+        let requests = await center.pendingNotificationRequests()
+        let ids = requests.map(\.identifier).filter { $0.hasPrefix(taskID.uuidString) }
+        center.removePendingNotificationRequests(withIdentifiers: ids)
     }
 
     private func add(taskID: UUID, title: String, body: String,

@@ -4,6 +4,7 @@ import SwiftData
 struct TodayView: View {
     @Environment(\.modelContext) private var context
     @Environment(HouseholdsModel.self) private var households
+    @Environment(\.scenePhase) private var scenePhase
     @Query(filter: #Predicate<TaskItem> { !$0.isArchived }, sort: \TaskItem.title)
     private var tasks: [TaskItem]
     @Query(filter: #Predicate<TodoItem> { !$0.isDone })
@@ -12,10 +13,22 @@ struct TodayView: View {
     @State private var confettiTrigger = 0
     @State private var summary = GamificationEngine.Summary()
 
-    private let today = Calendar.current.startOfDay(for: .now)
+    /// "Today" is refreshed when the calendar day rolls over (even while the app
+    /// stays foregrounded) and when it returns to the foreground, so the list
+    /// doesn't get stuck showing yesterday in a long-lived session.
+    @State private var today = Calendar.current.startOfDay(for: .now)
 
+    /// Day-scheduled tasks due today, plus floating ("once a week/month") tasks that
+    /// are outstanding for their current period (or were completed today, so the row
+    /// lingers, struck through and undoable, until the day rolls over).
     private var dueToday: [TaskItem] {
-        tasks.filter { SchedulingEngine.isScheduled($0, on: today) }
+        tasks.filter { SchedulingEngine.belongsInToday($0, on: today) }
+    }
+
+    /// The day a given task's completion is keyed to today (its own day for
+    /// day-scheduled tasks, the period start for floating ones).
+    private func occurrenceDay(for task: TaskItem) -> Date {
+        SchedulingEngine.occurrenceDate(for: task, on: today) ?? today
     }
 
     /// Shared household chores relevant to me (assigned to me, or unassigned/up-for-
@@ -44,15 +57,23 @@ struct TodayView: View {
 
     /// Today's count includes shared tasks; gamification/streaks stay local-only.
     private var completedCount: Int {
-        dueToday.filter { $0.isCompleted(on: today) }.count
+        dueToday.filter { $0.isCompleted(on: occurrenceDay(for: $0)) }.count
             + sharedDueToday.filter { $0.chore.isDone }.count
     }
     private var totalCount: Int { dueToday.count + sharedDueToday.count }
 
-    /// Cheap key that changes whenever a task or completion is added/removed, used
-    /// to recompute the (relatively expensive) gamification summary only when needed.
+    /// Cheap key that changes whenever a task or completion is added/removed — or a
+    /// completion flips done↔skipped at equal count — used to recompute the
+    /// (relatively expensive) gamification summary only when needed.
     private var statsKey: String {
-        "\(tasks.count)-\(tasks.reduce(0) { $0 + ($1.completions?.count ?? 0) })"
+        var total = 0, done = 0
+        for task in tasks {
+            for c in (task.completions ?? []) {
+                total += 1
+                if c.status == .done { done += 1 }
+            }
+        }
+        return "\(tasks.count)-\(total)-\(done)-\(today.timeIntervalSinceReferenceDate)"
     }
 
     var body: some View {
@@ -74,7 +95,8 @@ struct TodayView: View {
                             }
                             Section(header: Text("Due today")) {
                                 ForEach(dueToday) { task in
-                                    TaskRow(task: task, day: today, toggle: { toggle(task) })
+                                    let day = occurrenceDay(for: task)
+                                    TaskRow(task: task, day: day, toggle: { toggle(task, on: day) })
                                 }
                                 ForEach(sharedDueToday, id: \.chore.id) { item in
                                     SharedTaskRow(chore: item.chore, householdName: item.household.name) {
@@ -112,6 +134,12 @@ struct TodayView: View {
                 }
             }
             .task(id: statsKey) { summary = GamificationEngine.summary(for: tasks) }
+            .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
+                today = Calendar.current.startOfDay(for: .now)
+            }
+            .onChange(of: scenePhase) { _, phase in
+                if phase == .active { today = Calendar.current.startOfDay(for: .now) }
+            }
         }
     }
 
@@ -124,12 +152,12 @@ struct TodayView: View {
         Task { await NotificationManager.shared.reschedule(todo: todo) }
     }
 
-    private func toggle(_ task: TaskItem) {
-        let wasDone = task.completion(on: today) != nil
-        if let existing = task.completion(on: today) {
+    private func toggle(_ task: TaskItem, on day: Date) {
+        let wasDone = task.completion(on: day) != nil
+        if let existing = task.completion(on: day) {
             context.delete(existing)
         } else {
-            context.insert(Completion(scheduledDate: today, status: .done, task: task))
+            context.insert(Completion(scheduledDate: day, status: .done, task: task))
         }
         if !wasDone { Haptics.tap() }   // instant tactile feedback, before persisting
 

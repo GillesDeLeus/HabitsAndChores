@@ -7,6 +7,7 @@ struct FrequencyRule: Codable, Hashable {
         case weekly      // on specific weekdays
         case monthly     // on a specific day-of-month
         case everyN      // every N days/weeks/months from the start date
+        case floating    // due once within each period (week/month), no fixed day
     }
 
     enum Unit: String, Codable, CaseIterable {
@@ -41,6 +42,14 @@ struct FrequencyRule: Codable, Hashable {
         FrequencyRule(kind: .everyN, interval: max(1, interval), unit: unit, weekdays: [], dayOfMonth: nil)
     }
 
+    /// "Do it sometime this week/month" — no fixed day; the task stays outstanding
+    /// in Today every day of the period until completed once. `unit` is `.week` or
+    /// `.month` (a `.day` floating rule is meaningless, so it's treated as weekly).
+    static func floating(_ unit: Unit) -> FrequencyRule {
+        FrequencyRule(kind: .floating, interval: 1, unit: unit == .day ? .week : unit,
+                      weekdays: [], dayOfMonth: nil)
+    }
+
     // MARK: - Display
 
     /// A short, localizable, human-readable summary.
@@ -60,6 +69,11 @@ struct FrequencyRule: Codable, Hashable {
             case .day:   return String(localized: "Every \(interval) days")
             case .week:  return String(localized: "Every \(interval) weeks")
             case .month: return String(localized: "Every \(interval) months")
+            }
+        case .floating:
+            switch unit {
+            case .month: return String(localized: "Once a month")
+            default:     return String(localized: "Once a week")
             }
         }
     }

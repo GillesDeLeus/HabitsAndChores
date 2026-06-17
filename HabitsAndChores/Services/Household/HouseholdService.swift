@@ -233,6 +233,17 @@ struct HouseholdService {
     /// single done/not-done state stored as one `SharedCompletion` at this date.
     static let todoOccurrence = Date(timeIntervalSince1970: 0)
 
+    /// Whether a chore is relevant to *me* for the **Today** list: assigned to me,
+    /// unassigned (up for grabs), or something I completed for the current occurrence.
+    /// The last clause is what keeps a chore I just finished visible (struck through)
+    /// instead of vanishing the instant a rotating chore reassigns itself to the next
+    /// member. It clears on its own when the occurrence resets (`isDone` goes false).
+    /// `completedBy` must be stamped with the same `myName` used here (see `setDone`).
+    static func isMineForToday(assignee: String?, isDone: Bool, completedBy: String?,
+                               myName: String?) -> Bool {
+        assignee == nil || assignee == myName || (isDone && completedBy == myName)
+    }
+
     /// Round-robin assignee for a rotating chore. `names` is a stable (e.g. sorted)
     /// member order; advances to the next on completion, retreats on un-completion
     /// (so toggling done is symmetric). Returns nil only if there are no members.
@@ -262,6 +273,9 @@ struct HouseholdService {
         switch frequency.kind {
         case .daily:
             return today
+        case .floating:
+            // Keyed at the period start, so the chore stays done until next period.
+            return SchedulingEngine.floatingPeriod(unit: frequency.unit, containing: today, calendar: cal)?.start ?? today
         case .everyN:
             // Align to the anchor (chore creation): the most recent occurrence <= today.
             let anchorDay = cal.startOfDay(for: anchor)

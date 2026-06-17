@@ -196,7 +196,8 @@ final class HouseholdsModel {
         }
     }
 
-    func addChore(to household: Household, draft: ChoreDraft) {
+    func addChore(to household: Household, draft rawDraft: ChoreDraft) {
+        let draft = withInitialRotationAssignee(rawDraft, in: household)
         // Client-assigned record name so the optimistic row and the eventual server
         // record share an id, and the queued create is idempotent.
         let recordName = UUID().uuidString
@@ -205,7 +206,8 @@ final class HouseholdsModel {
                                      householdID: household.id, recordName: recordName, draft: draft))
     }
 
-    func updateChore(_ chore: SharedChore, draft: ChoreDraft, in household: Household) {
+    func updateChore(_ chore: SharedChore, draft rawDraft: ChoreDraft, in household: Household) {
+        let draft = withInitialRotationAssignee(rawDraft, in: household)
         applyLocal(household.id) { chores in
             guard let i = chores.firstIndex(where: { $0.id == chore.id }) else { return }
             chores[i] = sharedChore(id: chore.id, from: draft, createdAt: chore.createdAt,
@@ -214,6 +216,16 @@ final class HouseholdsModel {
         }
         enqueueAndFlush(.upsertChore(opID: UUID().uuidString, zone: ZoneRef(household),
                                      householdID: household.id, recordName: chore.id, draft: draft))
+    }
+
+    /// A rotating chore that nobody is assigned to yet kicks off with the first
+    /// member in the rotation order (the same stable alphabetical order
+    /// `rotatedAssignee` advances through), so it's never left unassigned.
+    private func withInitialRotationAssignee(_ draft: ChoreDraft, in household: Household) -> ChoreDraft {
+        guard draft.rotates, !draft.isTodo, draft.assignee == nil else { return draft }
+        var draft = draft
+        draft.assignee = household.members.map(\.name).sorted().first
+        return draft
     }
 
     /// Builds a local `SharedChore` mirror of a draft (for optimistic display).
@@ -239,7 +251,12 @@ final class HouseholdsModel {
 
     func setDone(_ chore: SharedChore, in household: Household, _ done: Bool) {
         let occurrence = HouseholdService.occurrence(for: chore)
-        let by = meDisplayName.isEmpty ? String(localized: "Someone") : meDisplayName
+        // Stamp completions with the same name the Today filter (`.mineOrUnassigned`)
+        // matches on — my resolved household-member name — so a chore I complete is
+        // reliably recognized as mine and lingers instead of vanishing. Fall back to
+        // the social display name (then "Someone") when there's no resolved member.
+        let myName = household.members.first(where: \.isCurrentUser)?.name
+        let by = myName ?? (meDisplayName.isEmpty ? String(localized: "Someone") : meDisplayName)
 
         // Optional rotation: a completed rotating chore moves to the next member for
         // the next occurrence (un-completing moves it back, so toggling is symmetric).
@@ -295,7 +312,10 @@ final class HouseholdsModel {
                     guard chore.isTodo == isTodo else { return false }
                     switch visibility {
                     case .all:              return true
-                    case .mineOrUnassigned: return chore.assignee == nil || chore.assignee == myName
+                    case .mineOrUnassigned:
+                        return HouseholdService.isMineForToday(
+                            assignee: chore.assignee, isDone: chore.isDone,
+                            completedBy: chore.completedBy, myName: myName)
                     case .mineOnly:         return chore.assignee == myName
                     }
                 }
