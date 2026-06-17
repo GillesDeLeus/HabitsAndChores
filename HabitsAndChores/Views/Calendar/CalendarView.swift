@@ -6,6 +6,7 @@ struct CalendarView: View {
     @Environment(HouseholdsModel.self) private var households
     @Query(filter: #Predicate<TaskItem> { !$0.isArchived })
     private var tasks: [TaskItem]
+    @Query private var allTodos: [TodoItem]
 
     @State private var month: Date = Calendar.current.startOfDay(for: .now)
     @State private var selectedDay: Date = Calendar.current.startOfDay(for: .now)
@@ -62,9 +63,8 @@ struct CalendarView: View {
                         date: date,
                         isSelected: calendar.isDate(date, inSameDayAs: selectedDay),
                         isToday: calendar.isDateInToday(date),
-                        scheduledCount: scheduledTasks(on: date).count + sharedChores(on: date).count,
-                        completedCount: scheduledTasks(on: date).filter { $0.isCompleted(on: date) }.count
-                            + sharedCompletedCount(on: date)
+                        scheduledCount: scheduledCount(on: date),
+                        completedCount: completedCount(on: date)
                     )
                     .onTapGesture { selectedDay = date }
                 } else {
@@ -80,12 +80,14 @@ struct CalendarView: View {
     private var dayDetail: some View {
         let items = scheduledTasks(on: selectedDay)
         let shared = sharedChores(on: selectedDay)
+        let dayTodos = todos(on: selectedDay)
+        let daySharedTodos = sharedTodos(on: selectedDay)
         let isToday = calendar.isDateInToday(selectedDay)
         return VStack(alignment: .leading, spacing: 8) {
             Text(selectedDay.formatted(.dateTime.weekday(.wide).month().day()))
                 .font(.headline)
                 .padding(.horizontal)
-            if items.isEmpty && shared.isEmpty {
+            if items.isEmpty && shared.isEmpty && dayTodos.isEmpty && daySharedTodos.isEmpty {
                 Text("Nothing scheduled.")
                     .foregroundStyle(.secondary)
                     .padding(.horizontal)
@@ -109,6 +111,25 @@ struct CalendarView: View {
                     .padding(.horizontal)
                     .padding(.vertical, 4)
                 }
+                // To-dos placed on their planned day (or due date). One-off, so done
+                // state is a single value and the toggle is live on any day.
+                ForEach(dayTodos) { todo in
+                    CalendarTodoRow(title: todo.title, isDone: todo.isDone,
+                                    dueDate: todo.dueDate, priority: todo.priority,
+                                    subtitle: nil) { toggleTodo(todo) }
+                        .padding(.horizontal)
+                        .padding(.vertical, 4)
+                }
+                ForEach(daySharedTodos, id: \.chore.id) { item in
+                    CalendarTodoRow(title: item.chore.title, isDone: item.chore.isDone,
+                                    dueDate: item.chore.dueDate, priority: item.chore.priority,
+                                    subtitle: item.household.name) {
+                        households.setDone(item.chore, in: item.household, !item.chore.isDone)
+                        Haptics.tap()
+                    }
+                    .padding(.horizontal)
+                    .padding(.vertical, 4)
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -118,6 +139,21 @@ struct CalendarView: View {
 
     private func scheduledTasks(on day: Date) -> [TaskItem] {
         tasks.filter { SchedulingEngine.isScheduled($0, on: day) }
+    }
+
+    /// Total scheduled items on `day` across tasks, shared chores, and to-dos.
+    private func scheduledCount(on day: Date) -> Int {
+        scheduledTasks(on: day).count + sharedChores(on: day).count
+            + todos(on: day).count + sharedTodos(on: day).count
+    }
+
+    /// Completed items on `day`. Shared-chore completion is only meaningful on today
+    /// (per-occurrence); to-do completion is a single state, accurate on any day.
+    private func completedCount(on day: Date) -> Int {
+        let tasksDone = scheduledTasks(on: day).filter { $0.isCompleted(on: day) }.count
+        let todosDone = todos(on: day).filter(\.isDone).count
+        let sharedTodosDone = sharedTodos(on: day).filter { $0.chore.isDone }.count
+        return tasksDone + sharedCompletedCount(on: day) + todosDone + sharedTodosDone
     }
 
     /// Shared household chores (the whole household, like the Tasks list) scheduled on
@@ -134,6 +170,30 @@ struct CalendarView: View {
     private func sharedCompletedCount(on day: Date) -> Int {
         guard calendar.isDateInToday(day) else { return 0 }
         return sharedChores(on: day).filter { $0.chore.isDone }.count
+    }
+
+    /// Personal to-dos placed on `day` — their planned "do" day if set, otherwise
+    /// their due date. To-dos are one-off, so their done-state is accurate on any day.
+    private func todos(on day: Date) -> [TodoItem] {
+        allTodos.filter { todo in
+            guard let placed = todo.scheduledDate ?? todo.dueDate else { return false }
+            return calendar.isDate(placed, inSameDayAs: day)
+        }
+    }
+
+    /// Shared household to-dos placed on `day` (planned day, else due date).
+    private func sharedTodos(on day: Date) -> [(household: Household, chore: SharedChore)] {
+        households.sharedTasks(isTodo: true, .all).filter {
+            guard let placed = $0.chore.scheduledDate ?? $0.chore.dueDate else { return false }
+            return calendar.isDate(placed, inSameDayAs: day)
+        }
+    }
+
+    private func toggleTodo(_ todo: TodoItem) {
+        todo.toggle()
+        Haptics.tap()
+        Task { @MainActor in context.saveOrReport() }
+        Task { await NotificationManager.shared.reschedule(todo: todo) }
     }
 
     /// The chore as it should display on `day`: its real done-state on today, but
@@ -187,6 +247,50 @@ struct CalendarView: View {
         let symbols = calendar.shortWeekdaySymbols
         let start = calendar.firstWeekday - 1
         return Array(symbols[start...] + symbols[..<start])
+    }
+}
+
+/// A compact to-do row for the calendar's day detail: completion toggle, title,
+/// and a caption with an optional household name, the due date, and a priority flag.
+private struct CalendarTodoRow: View {
+    let title: String
+    let isDone: Bool
+    let dueDate: Date?
+    let priority: TodoPriority
+    let subtitle: String?
+    let toggle: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: toggle) {
+                Image(systemName: isDone ? "checkmark.circle.fill" : "circle")
+                    .font(.title2)
+                    .foregroundStyle(isDone ? Color.accentColor : Color.secondary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(isDone ? "Mark not done" : "Mark done")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .strikethrough(isDone, color: .secondary)
+                    .foregroundStyle(isDone ? .secondary : .primary)
+                HStack(spacing: 8) {
+                    if let subtitle {
+                        Label(subtitle, systemImage: "house.fill")
+                    }
+                    if priority != .none {
+                        Image(systemName: "flag.fill").foregroundStyle(priority.color)
+                    }
+                    if let dueDate {
+                        Label(dueDate.formatted(.dateTime.month().day()), systemImage: "calendar")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .contentShape(Rectangle())
     }
 }
 

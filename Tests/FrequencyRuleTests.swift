@@ -27,6 +27,41 @@ final class FrequencyRuleTests: XCTestCase {
         }
     }
 
+    func testFloatingConstructorAndCodableRoundTrip() throws {
+        // A `.day` floating rule is meaningless and coerces to weekly.
+        XCTAssertEqual(FrequencyRule.floating(.day).unit, .week)
+        XCTAssertEqual(FrequencyRule.floating(.month).unit, .month)
+        XCTAssertEqual(FrequencyRule.floating(.week).kind, .floating)
+
+        for rule in [FrequencyRule.floating(.week), .floating(.month)] {
+            let data = try JSONEncoder().encode(rule)
+            XCTAssertEqual(try JSONDecoder().decode(FrequencyRule.self, from: data), rule)
+        }
+    }
+
+    func testLocalizedDescriptionCoversEveryKind() {
+        // Each branch (including weekday names and the floating units) yields a
+        // distinct, non-empty string.
+        let descriptions = [
+            FrequencyRule.daily.localizedDescription,
+            FrequencyRule.weekly(on: [2, 4]).localizedDescription,
+            FrequencyRule.weekly(on: []).localizedDescription,
+            FrequencyRule.monthly(day: 9).localizedDescription,
+            FrequencyRule.every(2, .day).localizedDescription,
+            FrequencyRule.every(3, .week).localizedDescription,
+            FrequencyRule.every(4, .month).localizedDescription,
+            FrequencyRule.floating(.week).localizedDescription,
+            FrequencyRule.floating(.month).localizedDescription,
+        ]
+        for d in descriptions { XCTAssertFalse(d.isEmpty) }
+        // Weekly-with-weekdays differs from the empty-weekday "Weekly" fallback.
+        XCTAssertNotEqual(FrequencyRule.weekly(on: [2, 4]).localizedDescription,
+                          FrequencyRule.weekly(on: []).localizedDescription)
+        // The two floating units render differently.
+        XCTAssertNotEqual(FrequencyRule.floating(.week).localizedDescription,
+                          FrequencyRule.floating(.month).localizedDescription)
+    }
+
     func testEveryNWeeksLandsOnAnchorWeekday() {
         var cal = Calendar(identifier: .gregorian)
         cal.timeZone = TimeZone(identifier: "UTC")!
