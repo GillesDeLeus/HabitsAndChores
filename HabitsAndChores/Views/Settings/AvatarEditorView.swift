@@ -9,6 +9,7 @@ struct AvatarEditorView: View {
     let service: SocialService
 
     @Environment(SocialAccount.self) private var account
+    @Environment(HouseholdsModel.self) private var households
     @Environment(\.dismiss) private var dismiss
     @Query(filter: #Predicate<TaskItem> { !$0.isArchived }) private var tasks: [TaskItem]
 
@@ -132,7 +133,7 @@ struct AvatarEditorView: View {
         }
         Task {
             if let me = account.userID, let handle = account.handle {
-                let summary = GamificationEngine.summary(for: tasks)
+                let summary = GamificationEngine.summary(for: tasks, shared: households.mySharedChoreStats())
                 let profile = SharedProfile(
                     userID: me, handle: handle,
                     displayName: account.displayName.isEmpty ? handle : account.displayName,

@@ -114,6 +114,7 @@ final class SharedChoreTests: XCTestCase {
         draft.reminderHour = 8
         draft.reminderMinute = 30
         draft.rotates = true
+        draft.anchorDate = date(2026, 6, 1)
 
         let data = try JSONEncoder().encode(draft)
         let decoded = try JSONDecoder().decode(ChoreDraft.self, from: data)
@@ -135,6 +136,9 @@ final class SharedChoreTests: XCTestCase {
         XCTAssertEqual(decoded.reminderHour, draft.reminderHour)
         XCTAssertEqual(decoded.reminderMinute, draft.reminderMinute)
         XCTAssertEqual(decoded.rotates, draft.rotates)
+        // The recurrence anchor must survive the outbox round-trip, or an offline
+        // create replayed later would lose its start day and shift the schedule.
+        XCTAssertEqual(decoded.anchorDate, draft.anchorDate)
     }
 
     func testDraftFromChoreThenBackPreservesIdentity() {
@@ -147,5 +151,8 @@ final class SharedChoreTests: XCTestCase {
         XCTAssertTrue(draft.rotates)
         XCTAssertEqual(draft.assignee, "Bo")
         XCTAssertEqual(draft.frequency, .weekly(on: [2]))
+        // Editing an existing chore must carry its anchor forward so the schedule
+        // (and history) survives the edit instead of resetting to "now".
+        XCTAssertEqual(draft.anchorDate, c.createdAt)
     }
 }

@@ -12,6 +12,11 @@ final class HouseholdsModel {
     var households: [Household] = []
     var invites: [HouseholdInvite] = []     // pending invitations addressed to me
     var loading = false
+    /// True once the *first* household fetch has completed (success, empty, or
+    /// unavailable). Lets merged surfaces (Today / Tasks / To-Do) show a spinner
+    /// instead of a premature "nothing planned" while shared data is still loading,
+    /// without flashing one on every later background refresh (`loading`).
+    var hasLoadedHouseholds = false
     var available = true
     var error: String?
 
@@ -50,7 +55,7 @@ final class HouseholdsModel {
 
     func reload() async {
         loading = true
-        defer { loading = false }
+        defer { loading = false; hasLoadedHouseholds = true }
         available = await service.isAvailable()
         guard available else { households = []; return }
         await outbox.drain()   // flush offline writes before re-fetching
@@ -197,7 +202,11 @@ final class HouseholdsModel {
     }
 
     func addChore(to household: Household, draft rawDraft: ChoreDraft) {
-        let draft = withInitialRotationAssignee(rawDraft, in: household)
+        var draft = withInitialRotationAssignee(rawDraft, in: household)
+        // Capture the recurrence anchor now and persist it, so the schedule survives
+        // an offline create being replayed later (which would otherwise re-stamp the
+        // CloudKit creation date and shift every occurrence).
+        draft.anchorDate = draft.anchorDate ?? Date()
         // Client-assigned record name so the optimistic row and the eventual server
         // record share an id, and the queued create is idempotent.
         let recordName = UUID().uuidString
@@ -207,7 +216,10 @@ final class HouseholdsModel {
     }
 
     func updateChore(_ chore: SharedChore, draft rawDraft: ChoreDraft, in household: Household) {
-        let draft = withInitialRotationAssignee(rawDraft, in: household)
+        var draft = withInitialRotationAssignee(rawDraft, in: household)
+        // Preserve the existing anchor across edits — editing a chore must never
+        // reset its recurrence start (and thus its history).
+        draft.anchorDate = draft.anchorDate ?? chore.createdAt
         applyLocal(household.id) { chores in
             guard let i = chores.firstIndex(where: { $0.id == chore.id }) else { return }
             chores[i] = sharedChore(id: chore.id, from: draft, createdAt: chore.createdAt,
@@ -228,13 +240,15 @@ final class HouseholdsModel {
         return draft
     }
 
-    /// Builds a local `SharedChore` mirror of a draft (for optimistic display).
-    private func sharedChore(id: String, from draft: ChoreDraft, createdAt: Date = .now,
+    /// Builds a local `SharedChore` mirror of a draft (for optimistic display). The
+    /// anchor mirrors the draft's persisted `anchorDate`, so the optimistic row and the
+    /// eventual server record share the same recurrence start.
+    private func sharedChore(id: String, from draft: ChoreDraft, createdAt: Date? = nil,
                              isDone: Bool = false, completedBy: String? = nil) -> SharedChore {
         SharedChore(id: id, title: draft.title, details: draft.details,
                     kindRaw: draft.kind.rawValue, categoryRaw: draft.category.rawValue,
                     frequency: draft.frequency, symbolName: draft.symbolName, colorHue: draft.colorHue,
-                    createdAt: createdAt, assignee: draft.assignee, isDone: isDone, completedBy: completedBy,
+                    createdAt: createdAt ?? draft.anchorDate ?? .now, assignee: draft.assignee, isDone: isDone, completedBy: completedBy,
                     isTodo: draft.isTodo, dueDate: draft.dueDate, scheduledDate: draft.scheduledDate,
                     priorityRaw: draft.priority.rawValue, reminderModeRaw: draft.todoReminderMode.rawValue,
                     reminderDate: draft.reminderDate, reminderOffset: draft.reminderOffset,
@@ -321,6 +335,38 @@ final class HouseholdsModel {
                 }
                 .map { (household, $0) }
         }
+    }
+
+    /// The current user's completed shared **recurring chores**, projected into the
+    /// form gamification needs (so household completions earn points, badges, streaks
+    /// and weekly-goal progress just like personal tasks). Shared to-dos are excluded,
+    /// mirroring personal to-dos, which also don't feed gamification.
+    ///
+    /// "Mine" uses the same name match as the Today filter and `setDone` stamping —
+    /// my resolved household-member name, falling back to the social display name.
+    func mySharedChoreStats() -> [GamificationEngine.SharedChoreStat] {
+        var result: [GamificationEngine.SharedChoreStat] = []
+        for household in households {
+            let myName = household.members.first(where: \.isCurrentUser)?.name
+                ?? (meDisplayName.isEmpty ? nil : meDisplayName)
+            guard let myName else { continue }
+            let mineByChore = Dictionary(grouping: household.completions.filter { $0.completedBy == myName },
+                                         by: \.choreID)
+            for chore in household.chores where !chore.isTodo {
+                let comps = (mineByChore[chore.id] ?? []).map { (occurrence: $0.occurrence, loggedAt: $0.loggedAt) }
+                guard !comps.isEmpty else { continue }
+                result.append(.init(kind: chore.kind, categoryRaw: chore.categoryRaw,
+                                    frequency: chore.frequency, anchor: chore.createdAt,
+                                    myCompletions: comps))
+            }
+        }
+        return result
+    }
+
+    /// Cheap fingerprint that changes whenever any shared completion is added/removed,
+    /// so views can fold it into their gamification recompute key.
+    var sharedCompletionFingerprint: Int {
+        households.reduce(0) { $0 + $1.completions.count }
     }
 
     /// The household with the given id, if the user is still a member.

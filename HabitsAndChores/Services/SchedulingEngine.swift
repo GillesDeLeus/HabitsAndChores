@@ -22,6 +22,14 @@ struct CompletionIndex {
         skippedDays = skipped
     }
 
+    /// Build directly from start-of-day sets. Used for shared household chores,
+    /// whose completions live in CloudKit (not `Completion` rows) and only ever carry
+    /// a done state (there's no per-occurrence "skip" for a shared chore).
+    init(doneDays: Set<Date>, skippedDays: Set<Date> = []) {
+        self.doneDays = doneDays
+        self.skippedDays = skippedDays
+    }
+
     /// `day` must already be a start-of-day date (occurrence dates always are).
     func isDone(_ day: Date) -> Bool { doneDays.contains(day) }
     /// Skipped only counts when the day isn't also done (done wins, matching the
@@ -237,10 +245,19 @@ enum SchedulingEngine {
     /// compute several derivations for the same task (e.g. the summary) build it once.
     static func currentStreak(for task: TaskItem, index: CompletionIndex,
                               asOf today: Date = .now, calendar: Calendar = .current) -> Int {
+        guard !task.isArchived else { return 0 }
+        return currentStreak(frequency: task.frequency, anchor: task.startDate, index: index,
+                             asOf: today, calendar: calendar)
+    }
+
+    /// As above, for a bare rule+anchor (shared household chores aren't `TaskItem`s).
+    static func currentStreak(frequency: FrequencyRule, anchor: Date, index: CompletionIndex,
+                              asOf today: Date = .now, calendar: Calendar = .current) -> Int {
         let todayStart = calendar.startOfDay(for: today)
         // Look back up to a year of scheduled occurrences.
         guard let yearAgo = calendar.date(byAdding: .year, value: -1, to: todayStart) else { return 0 }
-        let occ = occurrences(for: task, in: DateInterval(start: yearAgo, end: todayStart), calendar: calendar)
+        let occ = occurrences(frequency: frequency, anchor: anchor,
+                              in: DateInterval(start: yearAgo, end: todayStart), calendar: calendar)
             .sorted(by: >)
 
         var streak = 0
@@ -249,7 +266,7 @@ enum SchedulingEngine {
                 streak += 1
             } else if index.isSkipped(date) {
                 continue // skip doesn't break or extend
-            } else if isCurrentPeriod(occurrence: date, frequency: task.frequency, today: todayStart, calendar: calendar) {
+            } else if isCurrentPeriod(occurrence: date, frequency: frequency, today: todayStart, calendar: calendar) {
                 continue // the in-progress occurrence/period (not yet done) is not a break
             } else {
                 break
@@ -267,9 +284,18 @@ enum SchedulingEngine {
 
     static func longestStreak(for task: TaskItem, index: CompletionIndex,
                               asOf today: Date = .now, calendar: Calendar = .current) -> Int {
+        guard !task.isArchived else { return 0 }
+        return longestStreak(frequency: task.frequency, anchor: task.startDate, index: index,
+                             asOf: today, calendar: calendar)
+    }
+
+    /// As above, for a bare rule+anchor (shared household chores aren't `TaskItem`s).
+    static func longestStreak(frequency: FrequencyRule, anchor: Date, index: CompletionIndex,
+                              asOf today: Date = .now, calendar: Calendar = .current) -> Int {
         let todayStart = calendar.startOfDay(for: today)
         guard let yearAgo = calendar.date(byAdding: .year, value: -1, to: todayStart) else { return 0 }
-        let occ = occurrences(for: task, in: DateInterval(start: yearAgo, end: todayStart), calendar: calendar)
+        let occ = occurrences(frequency: frequency, anchor: anchor,
+                              in: DateInterval(start: yearAgo, end: todayStart), calendar: calendar)
             .sorted(by: <)
 
         var best = 0
@@ -280,7 +306,7 @@ enum SchedulingEngine {
                 best = max(best, run)
             } else if index.isSkipped(date) {
                 continue // neutral
-            } else if isCurrentPeriod(occurrence: date, frequency: task.frequency, today: todayStart, calendar: calendar) {
+            } else if isCurrentPeriod(occurrence: date, frequency: frequency, today: todayStart, calendar: calendar) {
                 continue // the in-progress occurrence/period doesn't break the run
             } else {
                 run = 0

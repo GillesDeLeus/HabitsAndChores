@@ -7,6 +7,7 @@ import CloudKit
 /// the create / leave flows. Everything here is inert until the user opts in.
 struct AccountSection: View {
     @Environment(SocialAccount.self) private var account
+    @Environment(HouseholdsModel.self) private var households
     @Query(filter: #Predicate<TaskItem> { !$0.isArchived }) private var tasks: [TaskItem]
     @State private var showingCreate = false
     @State private var showingAvatar = false
@@ -91,7 +92,7 @@ struct AccountSection: View {
             return
         }
         account.updateDisplayName(name)
-        Task { await ProfileSync.republish(account: account, tasks: tasks, service: service, force: true) }
+        Task { await ProfileSync.republish(account: account, tasks: tasks, shared: households.mySharedChoreStats(), service: service, force: true) }
     }
 
     private func leave(userID: String, handle: String) {
@@ -116,6 +117,7 @@ private struct CreateAccountSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(SocialAccount.self) private var account
+    @Environment(HouseholdsModel.self) private var households
     @Query(filter: #Predicate<TaskItem> { !$0.isArchived }) private var tasks: [TaskItem]
 
     private enum Step { case signIn, handle }
@@ -220,7 +222,7 @@ private struct CreateAccountSheet: View {
                 try await service.claimHandle(handle, for: pendingUserID)
                 let cloudUserRecordName = try? await CKContainer(identifier: CloudKitSocialService.containerID)
                     .userRecordID().recordName
-                let summary = GamificationEngine.summary(for: tasks)
+                let summary = GamificationEngine.summary(for: tasks, shared: households.mySharedChoreStats())
                 let profile = SharedProfile(
                     userID: pendingUserID,
                     handle: handle,

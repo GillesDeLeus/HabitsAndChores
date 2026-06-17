@@ -90,14 +90,24 @@ struct TodayView: View {
                 if c.status == .done { done += 1 }
             }
         }
-        return "\(tasks.count)-\(total)-\(done)-\(today.timeIntervalSinceReferenceDate)"
+        return "\(tasks.count)-\(total)-\(done)-\(households.sharedCompletionFingerprint)-\(today.timeIntervalSinceReferenceDate)"
     }
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 0) {
-                dayNavBar
-                content
+            Group {
+                // Wait for the first household fetch before showing anything, so the
+                // screen doesn't reveal personal tasks first and then have shared
+                // household tasks pop in a moment later — show all of today at once.
+                if households.hasLoadedHouseholds {
+                    VStack(spacing: 0) {
+                        dayNavBar
+                        content
+                    }
+                } else {
+                    ProgressView("Loading…")
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
             }
             .navigationTitle("Today")
             .navigationBarTitleDisplayMode(.inline)
@@ -115,7 +125,7 @@ struct TodayView: View {
                     .accessibilityLabel("Calendar")
                 }
             }
-            .task(id: statsKey) { summary = GamificationEngine.summary(for: tasks) }
+            .task(id: statsKey) { summary = GamificationEngine.summary(for: tasks, shared: households.mySharedChoreStats()) }
             .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
                 refreshToday()
             }
@@ -279,7 +289,7 @@ struct TodayView: View {
         // Celebrate only when marking done, and only if it unlocked something new.
         Task { @MainActor in
             context.saveOrReport()
-            if !wasDone, AchievementTracker.registerAndCheck(GamificationEngine.summary(for: tasks)) {
+            if !wasDone, AchievementTracker.registerAndCheck(GamificationEngine.summary(for: tasks, shared: households.mySharedChoreStats())) {
                 Haptics.celebrate()
                 confettiTrigger += 1
             }

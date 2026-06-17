@@ -103,8 +103,14 @@ struct TodoListView: View {
             if filter != .done {
                 Section(open.isEmpty && sharedOpen.isEmpty ? "" : String(localized: "Open")) {
                     if open.isEmpty && sharedOpen.isEmpty {
-                        Text("Nothing to do. Add something above.")
-                            .font(.callout).foregroundStyle(.secondary)
+                        if !households.hasLoadedHouseholds {
+                            // Shared to-dos may still be loading.
+                            HStack { Spacer(); ProgressView("Loading…"); Spacer() }
+                                .listRowSeparator(.hidden)
+                        } else {
+                            Text("Nothing to do. Add something above.")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
                     } else {
                         ForEach(open) { todo in
                             TodoRow(todo: todo) { toggle(todo) } edit: { editing = todo }

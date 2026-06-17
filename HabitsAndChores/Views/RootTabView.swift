@@ -73,7 +73,7 @@ struct RootTabView: View {
             if phase == .active, let me = account.userID { Task { await verifyAppleCredential(me) } }
             if phase == .active { Task { await households.drainOutbox() } }   // flush offline household writes
             if phase == .active || phase == .background {
-                Task { await ProfileSync.republish(account: account, tasks: tasks, service: service) }
+                Task { await ProfileSync.republish(account: account, tasks: tasks, shared: households.mySharedChoreStats(), service: service) }
             }
             // Refresh the widget when leaving the app, so it reflects the latest data.
             if phase == .background { WidgetCenter.shared.reloadAllTimelines() }

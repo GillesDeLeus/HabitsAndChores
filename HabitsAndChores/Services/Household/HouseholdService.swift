@@ -31,11 +31,24 @@ struct Household: Identifiable {
     /// every member can show every other member's real name (CloudKit won't share
     /// other users' names directly). Stored on the household root record.
     let nameByRecordName: [String: String]
+    /// Every completion event in the household (who completed what, when). Retained
+    /// from the load so gamification can credit a member for their shared completions
+    /// without a second CloudKit fetch. Defaulted so other constructors keep compiling.
+    var completions: [SharedCompletionFact] = []
 
     var isOwner: Bool { scope == .private }
 
     /// Display names for assignment (e.g. the assignee picker).
     var memberNames: [String] { members.map(\.name) }
+}
+
+/// A retained shared-completion record: who completed which chore, at which occurrence,
+/// and the real completion time. Drives gamification credit for shared chores.
+struct SharedCompletionFact: Hashable {
+    let choreID: String
+    let completedBy: String   // member display name the completion was stamped with
+    let occurrence: Date      // start-of-day occurrence key (sentinel for to-dos)
+    let loggedAt: Date        // real completion time (record creation date)
 }
 
 /// A single "X completed Y" event in a household, for the fairness/activity view.
@@ -166,10 +179,18 @@ struct ChoreDraft: Codable {
     var reminderMinute: Int?
     /// Rotate the assignee among members after each completion.
     var rotates = false
+    /// Immutable recurrence anchor (the chore's "start day"), captured client-side at
+    /// creation and persisted so the schedule never shifts. Without this the anchor
+    /// fell back to the CloudKit `creationDate`, which moves when an offline-created
+    /// chore is later replayed (the server stamps a fresh creation time) — silently
+    /// erasing every past occurrence, including completed ones. nil for legacy chores
+    /// (they fall back to `creationDate` on load).
+    var anchorDate: Date?
 
     init() {}
 
     init(_ chore: SharedChore) {
+        anchorDate = chore.createdAt
         title = chore.title
         details = chore.details
         kind = chore.kind
@@ -430,9 +451,16 @@ struct HouseholdService {
                 // Group completion records by the chore they belong to.
                 let cal = Calendar.current
                 var completionsByChore: [String: [CKRecord]] = [:]
+                var completionFacts: [SharedCompletionFact] = []
                 for rec in records where rec.recordType == RecordType.completion {
-                    if let choreID = rec["choreID"] as? String {
-                        completionsByChore[choreID, default: []].append(rec)
+                    guard let choreID = rec["choreID"] as? String else { continue }
+                    completionsByChore[choreID, default: []].append(rec)
+                    if let by = rec["completedBy"] as? String, !by.isEmpty {
+                        let occ = (rec["date"] as? Date).map { cal.startOfDay(for: $0) }
+                            ?? cal.startOfDay(for: rec.creationDate ?? .now)
+                        completionFacts.append(SharedCompletionFact(
+                            choreID: choreID, completedBy: by,
+                            occurrence: occ, loggedAt: rec.creationDate ?? occ))
                     }
                 }
 
@@ -441,7 +469,9 @@ struct HouseholdService {
                     .map { rec -> SharedChore in
                         let frequency = (rec["frequency"] as? Data)
                             .flatMap { try? JSONDecoder().decode(FrequencyRule.self, from: $0) } ?? .daily
-                        let createdAt = rec.creationDate ?? .now
+                        // Prefer the persisted, immutable anchor; fall back to the
+                        // CloudKit creation date for legacy chores, then to now.
+                        let createdAt = (rec["anchorDate"] as? Date) ?? rec.creationDate ?? .now
                         let isTodo = rec["isTodo"] as? Bool ?? false
                         // To-dos use a fixed completion key; recurring chores use their occurrence.
                         let occurrence = isTodo
@@ -481,7 +511,8 @@ struct HouseholdService {
                 result.append(Household(id: root.recordID.recordName, name: name,
                                         zoneID: zone.zoneID, scope: scope,
                                         members: members, chores: chores,
-                                        nameByRecordName: nameByRecordName))
+                                        nameByRecordName: nameByRecordName,
+                                        completions: completionFacts))
             }
         }
         return result.sorted { $0.name < $1.name }
@@ -582,6 +613,9 @@ struct HouseholdService {
         record["reminderHour"] = draft.reminderHour
         record["reminderMinute"] = draft.reminderMinute
         record["rotates"] = draft.rotates
+        // Only ever set the anchor (never clear it): a nil here would be an update that
+        // forgot to carry it, and clobbering the stored anchor would shift the schedule.
+        if let anchor = draft.anchorDate { record["anchorDate"] = anchor }
     }
 
     /// Marks/unmarks a chore done for its current occurrence by writing/removing a

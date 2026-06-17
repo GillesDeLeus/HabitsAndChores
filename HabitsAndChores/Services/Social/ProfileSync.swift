@@ -11,6 +11,7 @@ enum ProfileSync {
     private static let minInterval: TimeInterval = 120
 
     static func republish(account: SocialAccount, tasks: [TaskItem],
+                          shared: [GamificationEngine.SharedChoreStat] = [],
                           service: SocialService, force: Bool = false) async {
         guard account.isJoined, let me = account.userID, let handle = account.handle else { return }
         // Accounts created before cloudUserRecordName existed need a one-time backfill
@@ -24,7 +25,7 @@ enum ProfileSync {
             account.updateCloudUserRecordName(recordName)
         }
 
-        let summary = GamificationEngine.summary(for: tasks)
+        let summary = GamificationEngine.summary(for: tasks, shared: shared)
         let profile = SharedProfile(
             userID: me, handle: handle,
             displayName: account.displayName.isEmpty ? handle : account.displayName,

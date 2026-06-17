@@ -49,14 +49,20 @@ struct TaskListView: View {
         List {
             if active.isEmpty && archived.isEmpty && sharedChores.isEmpty {
                 let narrowed = !search.isEmpty || isFiltering
-                ContentUnavailableView {
-                    Label(narrowed ? "No matches" : "No tasks yet", systemImage: "checklist")
-                } description: {
-                    Text(narrowed ? "Try a different search or filter." : "Add your own or browse the built-in library.")
-                } actions: {
-                    if !narrowed {
-                        Button("Browse library") { showingTemplates = true }
-                            .buttonStyle(.borderedProminent)
+                if !narrowed && !households.hasLoadedHouseholds {
+                    // Shared chores may still be loading — don't say "No tasks yet" yet.
+                    HStack { Spacer(); ProgressView("Loading…"); Spacer() }
+                        .listRowSeparator(.hidden)
+                } else {
+                    ContentUnavailableView {
+                        Label(narrowed ? "No matches" : "No tasks yet", systemImage: "checklist")
+                    } description: {
+                        Text(narrowed ? "Try a different search or filter." : "Add your own or browse the built-in library.")
+                    } actions: {
+                        if !narrowed {
+                            Button("Browse library") { showingTemplates = true }
+                                .buttonStyle(.borderedProminent)
+                        }
                     }
                 }
             } else {

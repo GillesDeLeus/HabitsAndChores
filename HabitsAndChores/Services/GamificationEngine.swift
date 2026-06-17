@@ -10,6 +10,20 @@ enum GamificationEngine {
     /// Points awarded per completed (done) occurrence. Skips and misses give none.
     static let pointsPerCompletion = 10
 
+    /// A shared household chore reduced to just what gamification needs: its schedule
+    /// (to project occurrences for streaks/weekly goals) and the occurrences the
+    /// current user personally completed. Built by `HouseholdsModel.mySharedChoreStats()`.
+    /// Recurring chores only — shared to-dos don't count, mirroring personal to-dos.
+    struct SharedChoreStat {
+        let kind: TaskKind
+        let categoryRaw: String
+        let frequency: FrequencyRule
+        let anchor: Date
+        /// Occurrence dates the current user completed, each with the real completion
+        /// time (for the Early Bird badge).
+        let myCompletions: [(occurrence: Date, loggedAt: Date)]
+    }
+
     // MARK: - Summary
 
     struct Summary {
@@ -38,6 +52,7 @@ enum GamificationEngine {
     }
 
     static func summary(for tasks: [TaskItem],
+                        shared: [SharedChoreStat] = [],
                         asOf now: Date = .now,
                         calendar: Calendar = .current) -> Summary {
         var s = Summary()
@@ -86,6 +101,38 @@ enum GamificationEngine {
 
             for (i, span) in perfectSpans.enumerated() {
                 let occ = SchedulingEngine.occurrences(for: task, in: span, calendar: calendar)
+                weekScheduled[i] += occ.count
+                weekDone[i] += occ.filter { index.isDone($0) }.count
+            }
+        }
+
+        // Shared household chores the current user completed count toward gamification
+        // exactly like personal tasks: each completion is points + badge progress, and
+        // the chore's schedule drives streaks, the weekly goal, and perfect weeks.
+        for stat in shared {
+            let doneDays = Set(stat.myCompletions.map { calendar.startOfDay(for: $0.occurrence) })
+            let index = CompletionIndex(doneDays: doneDays)
+
+            for c in stat.myCompletions {
+                s.totalCompleted += 1
+                switch stat.kind {
+                case .chore: s.choreCompleted += 1
+                case .habit: s.habitCompleted += 1
+                }
+                categoriesWithDone.insert(stat.categoryRaw)
+                if calendar.component(.hour, from: c.loggedAt) < 9 { s.earlyBirdCount += 1 }
+            }
+
+            s.longestStreak = max(s.longestStreak, SchedulingEngine.longestStreak(frequency: stat.frequency, anchor: stat.anchor, index: index, asOf: now, calendar: calendar))
+            s.bestCurrentStreak = max(s.bestCurrentStreak, SchedulingEngine.currentStreak(frequency: stat.frequency, anchor: stat.anchor, index: index, asOf: now, calendar: calendar))
+
+            if let weekSpan {
+                let occ = SchedulingEngine.occurrences(frequency: stat.frequency, anchor: stat.anchor, in: weekSpan, calendar: calendar)
+                s.scheduledThisWeek += occ.count
+                s.completedThisWeek += occ.filter { index.isDone($0) }.count
+            }
+            for (i, span) in perfectSpans.enumerated() {
+                let occ = SchedulingEngine.occurrences(frequency: stat.frequency, anchor: stat.anchor, in: span, calendar: calendar)
                 weekScheduled[i] += occ.count
                 weekDone[i] += occ.filter { index.isDone($0) }.count
             }

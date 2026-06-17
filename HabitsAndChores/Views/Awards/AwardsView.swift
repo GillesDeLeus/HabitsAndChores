@@ -2,6 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct AwardsView: View {
+    @Environment(HouseholdsModel.self) private var households
     @Query(filter: #Predicate<TaskItem> { !$0.isArchived }, sort: \TaskItem.title)
     private var tasks: [TaskItem]
 
@@ -10,9 +11,9 @@ struct AwardsView: View {
 
     private let columns = [GridItem(.adaptive(minimum: 104), spacing: 16)]
 
-    /// Cheap key that changes when tasks/completions change; drives recompute.
+    /// Cheap key that changes when personal *or* shared completions change; drives recompute.
     private var statsKey: String {
-        "\(tasks.count)-\(tasks.reduce(0) { $0 + ($1.completions?.count ?? 0) })"
+        "\(tasks.count)-\(tasks.reduce(0) { $0 + ($1.completions?.count ?? 0) })-\(households.sharedCompletionFingerprint)"
     }
 
     var body: some View {
@@ -29,7 +30,7 @@ struct AwardsView: View {
             .background(Color(.systemGroupedBackground))
             .overlay { ConfettiView(trigger: confettiTrigger) }
             .task(id: statsKey) {
-                summary = GamificationEngine.summary(for: tasks)
+                summary = GamificationEngine.summary(for: tasks, shared: households.mySharedChoreStats())
                 celebrateIfNeeded(summary)
             }
             .toolbar {
@@ -171,4 +172,5 @@ private struct WeeklyRingTile: View {
 #Preview {
     AwardsView()
         .modelContainer(PreviewData.container)
+        .environment(HouseholdsModel())
 }
