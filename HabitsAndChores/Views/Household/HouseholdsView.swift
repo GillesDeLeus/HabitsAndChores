@@ -25,6 +25,9 @@ final class HouseholdsModel {
     var meDisplayName: String = ""
     /// My social user id, used to address and fetch in-app household invitations.
     var meUserID: String?
+    /// My character avatar, published to households so other members can show it (and
+    /// rendered for my own row without a round-trip). nil when I have no social account.
+    var meAvatarConfig: AvatarConfig?
 
     /// Invitations I've accepted/declined. The invite record lives in the public
     /// database and is owned by the inviter, so I can't delete it myself — I just
@@ -69,12 +72,13 @@ final class HouseholdsModel {
         }
         do {
             households = try await service.households(currentUserRecordName: meRecordName,
-                                                      currentUserDisplayName: meDisplayName)
+                                                      currentUserDisplayName: meDisplayName,
+                                                      currentUserAvatar: meAvatarConfig)
                 .filter { !leftHouseholdIDs.contains($0.id) }
             dbTokens = probe.tokens   // commit tokens only on a successful fetch
             error = nil
             await rescheduleSharedNotifications()
-            await publishMyMemberName()
+            await publishMyMemberIdentity()
         } catch {
             self.error = error.localizedDescription
         }
@@ -98,14 +102,15 @@ final class HouseholdsModel {
         return (changed, tokens)
     }
 
-    /// Publishes my display name onto each household I'm in (keyed by my CloudKit
-    /// user record name) so other members can see my real name instead of "Member".
-    /// Only writes when missing/changed, so it's idempotent and won't loop.
-    private func publishMyMemberName() async {
+    /// Publishes my display name + avatar onto each household I'm in (keyed by my
+    /// CloudKit user record name) so other members can see my real name and face
+    /// instead of "Member"/initials. The service skips a write when nothing changed,
+    /// so this is idempotent and won't loop.
+    private func publishMyMemberIdentity() async {
         guard let rn = meRecordName, !meDisplayName.isEmpty else { return }
         for household in households where household.members.contains(where: \.isCurrentUser) {
-            guard household.nameByRecordName[rn] != meDisplayName else { continue }
-            try? await service.publishMemberName(meDisplayName, recordName: rn, in: household)
+            try? await service.publishMemberIdentity(name: meDisplayName, avatar: meAvatarConfig,
+                                                     recordName: rn, in: household)
         }
     }
 
@@ -223,7 +228,7 @@ final class HouseholdsModel {
         applyLocal(household.id) { chores in
             guard let i = chores.firstIndex(where: { $0.id == chore.id }) else { return }
             chores[i] = sharedChore(id: chore.id, from: draft, createdAt: chore.createdAt,
-                                    isDone: chore.isDone, completedBy: chore.completedBy)
+                                    completedByMembers: chore.completedByMembers, isDone: chore.isDone)
             chores.sort { $0.title < $1.title }
         }
         enqueueAndFlush(.upsertChore(opID: UUID().uuidString, zone: ZoneRef(household),
@@ -234,9 +239,9 @@ final class HouseholdsModel {
     /// member in the rotation order (the same stable alphabetical order
     /// `rotatedAssignee` advances through), so it's never left unassigned.
     private func withInitialRotationAssignee(_ draft: ChoreDraft, in household: Household) -> ChoreDraft {
-        guard draft.rotates, !draft.isTodo, draft.assignee == nil else { return draft }
+        guard draft.rotates, !draft.isTodo, draft.assignees.isEmpty else { return draft }
         var draft = draft
-        draft.assignee = household.members.map(\.name).sorted().first
+        if let first = household.members.map(\.name).sorted().first { draft.assignees = [first] }
         return draft
     }
 
@@ -244,11 +249,12 @@ final class HouseholdsModel {
     /// anchor mirrors the draft's persisted `anchorDate`, so the optimistic row and the
     /// eventual server record share the same recurrence start.
     private func sharedChore(id: String, from draft: ChoreDraft, createdAt: Date? = nil,
-                             isDone: Bool = false, completedBy: String? = nil) -> SharedChore {
+                             completedByMembers: Set<String> = [], isDone: Bool = false) -> SharedChore {
         SharedChore(id: id, title: draft.title, details: draft.details,
                     kindRaw: draft.kind.rawValue, categoryRaw: draft.category.rawValue,
                     frequency: draft.frequency, symbolName: draft.symbolName, colorHue: draft.colorHue,
-                    createdAt: createdAt ?? draft.anchorDate ?? .now, assignee: draft.assignee, isDone: isDone, completedBy: completedBy,
+                    createdAt: createdAt ?? draft.anchorDate ?? .now, assignees: draft.assignees,
+                    completedByMembers: completedByMembers, isDone: isDone,
                     isTodo: draft.isTodo, dueDate: draft.dueDate, scheduledDate: draft.scheduledDate,
                     priorityRaw: draft.priority.rawValue, reminderModeRaw: draft.todoReminderMode.rawValue,
                     reminderDate: draft.reminderDate, reminderOffset: draft.reminderOffset,
@@ -278,9 +284,11 @@ final class HouseholdsModel {
 
         applyLocal(household.id) { chores in
             if let i = chores.firstIndex(where: { $0.id == chore.id }) {
-                chores[i].isDone = done
-                chores[i].completedBy = done ? by : nil
-                if let rotatedAssignee { chores[i].assignee = rotatedAssignee }
+                // Per-person: toggle only *my* check-off; co-assignees' ticks are untouched.
+                if done { chores[i].completedByMembers.insert(by) }
+                else { chores[i].completedByMembers.remove(by) }
+                chores[i].isDone = done   // my-perspective done state
+                if let rotatedAssignee { chores[i].assignees = [rotatedAssignee] }
             }
         }
         outbox.enqueue(.setCompletion(opID: UUID().uuidString, zone: ZoneRef(household),
@@ -288,18 +296,19 @@ final class HouseholdsModel {
                                       done: done, completionRecordName: UUID().uuidString))
         if let rotatedAssignee {
             outbox.enqueue(.assign(opID: UUID().uuidString, zone: ZoneRef(household),
-                                   choreRecordName: chore.id, member: rotatedAssignee))
+                                   choreRecordName: chore.id, members: [rotatedAssignee]))
         }
         flush()
     }
 
     /// The next assignee for a rotating chore (nil if it doesn't rotate, isn't
     /// recurring, or the household has no members). Advances on completion, retreats
-    /// on un-completion, using a stable alphabetical member order.
+    /// on un-completion, using a stable alphabetical member order. Rotation is a
+    /// single-owner concept, so it pivots on the chore's first assignee.
     private func nextAssignee(for chore: SharedChore, in household: Household, done: Bool) -> String? {
         guard chore.rotates, !chore.isTodo else { return nil }
         return HouseholdService.rotatedAssignee(names: household.members.map(\.name).sorted(),
-                                                current: chore.assignee, done: done)
+                                                current: chore.assignees.first, done: done)
     }
 
     func registerSubscriptions() async { await service.registerSubscriptions() }
@@ -328,9 +337,10 @@ final class HouseholdsModel {
                     case .all:              return true
                     case .mineOrUnassigned:
                         return HouseholdService.isMineForToday(
-                            assignee: chore.assignee, isDone: chore.isDone,
-                            completedBy: chore.completedBy, myName: myName)
-                    case .mineOnly:         return chore.assignee == myName
+                            assignees: chore.assignees, completedByMembers: chore.completedByMembers,
+                            myName: myName)
+                    case .mineOnly:
+                        return myName.map(chore.assignees.contains) ?? false
                     }
                 }
                 .map { (household, $0) }
@@ -372,12 +382,12 @@ final class HouseholdsModel {
     /// The household with the given id, if the user is still a member.
     func household(_ id: String) -> Household? { households.first { $0.id == id } }
 
-    func assign(_ chore: SharedChore, to member: String?, in household: Household) {
+    func assign(_ chore: SharedChore, to members: [String], in household: Household) {
         applyLocal(household.id) { chores in
-            if let i = chores.firstIndex(where: { $0.id == chore.id }) { chores[i].assignee = member }
+            if let i = chores.firstIndex(where: { $0.id == chore.id }) { chores[i].assignees = members }
         }
         enqueueAndFlush(.assign(opID: UUID().uuidString, zone: ZoneRef(household),
-                                choreRecordName: chore.id, member: member))
+                                choreRecordName: chore.id, members: members))
     }
 
     func delete(_ chore: SharedChore, in household: Household) {
@@ -403,7 +413,8 @@ final class HouseholdsModel {
     private func refreshQuietly() async {
         guard await service.isAvailable() else { return }
         if let fresh = try? await service.households(currentUserRecordName: meRecordName,
-                                                     currentUserDisplayName: meDisplayName) {
+                                                     currentUserDisplayName: meDisplayName,
+                                                     currentUserAvatar: meAvatarConfig) {
             households = fresh.filter { !leftHouseholdIDs.contains($0.id) }
             await rescheduleSharedNotifications()
         }
@@ -489,6 +500,7 @@ struct HouseholdsView: View {
             model.meRecordName = account.cloudUserRecordName
             model.meDisplayName = account.displayName
             model.meUserID = account.userID
+            model.meAvatarConfig = account.avatarConfig
             await model.registerSubscriptions()
             await model.reload()
         }

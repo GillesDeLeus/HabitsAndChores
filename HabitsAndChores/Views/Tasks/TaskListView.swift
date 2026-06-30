@@ -238,8 +238,8 @@ private struct SharedTaskInfoRow: View {
                 Text(chore.title)
                 HStack(spacing: 4) {
                     Image(systemName: "house.fill")
-                    if let assignee = chore.assignee {
-                        Text("\(householdName) · \(chore.frequency.localizedDescription) · \(assignee)")
+                    if let summary = chore.assigneeSummary() {
+                        Text("\(householdName) · \(chore.frequency.localizedDescription) · \(summary)")
                     } else {
                         Text("\(householdName) · \(chore.frequency.localizedDescription)")
                     }

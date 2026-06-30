@@ -331,8 +331,10 @@ private struct SharedTodoRow: View {
                             if let scheduled = chore.scheduledDate {
                                 Label(scheduled.formatted(.dateTime.month().day()), systemImage: "calendar.badge.clock")
                             }
-                            if let assignee = chore.assignee {
-                                Text("· \(assignee)")
+                            if chore.hasMultipleAssignees {
+                                Text("· \(chore.progressSummary)")
+                            } else if let summary = chore.assigneeSummary() {
+                                Text("· \(summary)")
                             }
                         }
                         .font(.caption2)

@@ -262,7 +262,7 @@ struct TodayView: View {
         guard !isViewingToday else { return chore }
         var copy = chore
         copy.isDone = false
-        copy.completedBy = nil
+        copy.completedByMembers = []
         return copy
     }
 
@@ -350,8 +350,10 @@ private struct TodaySharedTodoRow: View {
                 Text(chore.title)
                 HStack(spacing: 4) {
                     Image(systemName: "house.fill")
-                    if let assignee = chore.assignee {
-                        Text("\(householdName) · \(assignee)")
+                    if chore.hasMultipleAssignees {
+                        Text("\(householdName) · \(chore.progressSummary)")
+                    } else if let summary = chore.assigneeSummary() {
+                        Text("\(householdName) · \(summary)")
                     } else {
                         Text(householdName)
                     }

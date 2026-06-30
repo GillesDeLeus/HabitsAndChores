@@ -23,10 +23,13 @@ struct SharedTaskRow: View {
                     .foregroundStyle(chore.isDone ? .secondary : .primary)
                 HStack(spacing: 4) {
                     Image(systemName: "house.fill").font(.caption2)
-                    if chore.isDone, let by = chore.completedBy {
+                    if chore.hasMultipleAssignees {
+                        // Per-person check-off: show progress instead of a single owner.
+                        Text("\(householdName) · \(chore.frequency.localizedDescription) · \(chore.progressSummary)")
+                    } else if chore.isDone, let by = chore.completedBy {
                         Text("\(householdName) · Done by \(by)")
-                    } else if let assignee = chore.assignee {
-                        Text("\(householdName) · \(chore.frequency.localizedDescription) · \(assignee)")
+                    } else if let summary = chore.assigneeSummary() {
+                        Text("\(householdName) · \(chore.frequency.localizedDescription) · \(summary)")
                     } else {
                         Text("\(householdName) · \(chore.frequency.localizedDescription)")
                     }

@@ -63,6 +63,7 @@ struct RootTabView: View {
             households.meRecordName = account.cloudUserRecordName
             households.meDisplayName = account.displayName
             households.meUserID = account.userID
+            households.meAvatarConfig = account.avatarConfig
             await households.registerSubscriptions()
             await households.reload()
         }
