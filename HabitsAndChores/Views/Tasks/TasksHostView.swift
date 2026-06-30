@@ -18,19 +18,23 @@ struct TasksHostView: View {
 
     var body: some View {
         NavigationStack {
-            Group {
-                switch section {
-                case .recurring: TaskListView()
-                case .todo:      TodoListView()
+            VStack(spacing: 0) {
+                // The section switcher lives in the body (not a `.principal` toolbar
+                // item) so it's always visible — a toolbar-centered control gets
+                // squeezed out when the list's own bar buttons plus the Settings gear
+                // crowd the navigation bar on narrower devices.
+                Picker("Section", selection: $section) {
+                    ForEach(Section.allCases) { Text($0.label).tag($0) }
                 }
-            }
-            .toolbar {
-                ToolbarItem(placement: .principal) {
-                    Picker("Section", selection: $section) {
-                        ForEach(Section.allCases) { Text($0.label).tag($0) }
+                .pickerStyle(.segmented)
+                .padding(.horizontal)
+                .padding(.bottom, 6)
+
+                Group {
+                    switch section {
+                    case .recurring: TaskListView()
+                    case .todo:      TodoListView()
                     }
-                    .pickerStyle(.segmented)
-                    .frame(maxWidth: 240)
                 }
             }
             .settingsToolbar()
