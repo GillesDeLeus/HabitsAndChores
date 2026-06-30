@@ -3,7 +3,7 @@ import Foundation
 /// A composable cartoon avatar described purely by integer choices into the
 /// palettes/part-sets defined in `CharacterAvatarView`. Codable and tiny, so it
 /// syncs as one small JSON field on the public profile.
-struct AvatarConfig: Codable, Equatable {
+struct AvatarConfig: Codable, Equatable, Hashable {
     var background = 0
     var skin = 2
     var hair = 1

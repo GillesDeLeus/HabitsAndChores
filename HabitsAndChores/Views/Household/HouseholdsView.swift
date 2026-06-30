@@ -25,6 +25,9 @@ final class HouseholdsModel {
     var meDisplayName: String = ""
     /// My social user id, used to address and fetch in-app household invitations.
     var meUserID: String?
+    /// My character avatar, published to households so other members can show it (and
+    /// rendered for my own row without a round-trip). nil when I have no social account.
+    var meAvatarConfig: AvatarConfig?
 
     /// Invitations I've accepted/declined. The invite record lives in the public
     /// database and is owned by the inviter, so I can't delete it myself — I just
@@ -69,12 +72,13 @@ final class HouseholdsModel {
         }
         do {
             households = try await service.households(currentUserRecordName: meRecordName,
-                                                      currentUserDisplayName: meDisplayName)
+                                                      currentUserDisplayName: meDisplayName,
+                                                      currentUserAvatar: meAvatarConfig)
                 .filter { !leftHouseholdIDs.contains($0.id) }
             dbTokens = probe.tokens   // commit tokens only on a successful fetch
             error = nil
             await rescheduleSharedNotifications()
-            await publishMyMemberName()
+            await publishMyMemberIdentity()
         } catch {
             self.error = error.localizedDescription
         }
@@ -98,14 +102,15 @@ final class HouseholdsModel {
         return (changed, tokens)
     }
 
-    /// Publishes my display name onto each household I'm in (keyed by my CloudKit
-    /// user record name) so other members can see my real name instead of "Member".
-    /// Only writes when missing/changed, so it's idempotent and won't loop.
-    private func publishMyMemberName() async {
+    /// Publishes my display name + avatar onto each household I'm in (keyed by my
+    /// CloudKit user record name) so other members can see my real name and face
+    /// instead of "Member"/initials. The service skips a write when nothing changed,
+    /// so this is idempotent and won't loop.
+    private func publishMyMemberIdentity() async {
         guard let rn = meRecordName, !meDisplayName.isEmpty else { return }
         for household in households where household.members.contains(where: \.isCurrentUser) {
-            guard household.nameByRecordName[rn] != meDisplayName else { continue }
-            try? await service.publishMemberName(meDisplayName, recordName: rn, in: household)
+            try? await service.publishMemberIdentity(name: meDisplayName, avatar: meAvatarConfig,
+                                                     recordName: rn, in: household)
         }
     }
 
@@ -408,7 +413,8 @@ final class HouseholdsModel {
     private func refreshQuietly() async {
         guard await service.isAvailable() else { return }
         if let fresh = try? await service.households(currentUserRecordName: meRecordName,
-                                                     currentUserDisplayName: meDisplayName) {
+                                                     currentUserDisplayName: meDisplayName,
+                                                     currentUserAvatar: meAvatarConfig) {
             households = fresh.filter { !leftHouseholdIDs.contains($0.id) }
             await rescheduleSharedNotifications()
         }
@@ -494,6 +500,7 @@ struct HouseholdsView: View {
             model.meRecordName = account.cloudUserRecordName
             model.meDisplayName = account.displayName
             model.meUserID = account.userID
+            model.meAvatarConfig = account.avatarConfig
             await model.registerSubscriptions()
             await model.reload()
         }

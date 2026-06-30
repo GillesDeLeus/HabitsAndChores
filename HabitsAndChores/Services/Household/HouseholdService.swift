@@ -17,6 +17,10 @@ struct HouseholdMember: Identifiable, Hashable {
     let isCurrentUser: Bool
     /// True when `name` is a real resolved name, not the generic "Owner"/"Member" fallback.
     let hasResolvedName: Bool
+    /// The member's self-published character avatar, if they have a social account and
+    /// published it (CloudKit won't share other users' avatars directly — see
+    /// `nameByRecordName`/`avatarByRecordName`). nil → fall back to initials.
+    var avatarConfig: AvatarConfig? = nil
 }
 
 /// A shared group (couple / household) backed by a CKShare on a custom zone.
@@ -31,6 +35,11 @@ struct Household: Identifiable {
     /// every member can show every other member's real name (CloudKit won't share
     /// other users' names directly). Stored on the household root record.
     let nameByRecordName: [String: String]
+    /// Self-published member character avatars, keyed by CloudKit user record name —
+    /// the avatar counterpart to `nameByRecordName` (CloudKit won't share other users'
+    /// avatars either). Stored on the root record's `memberAvatars` map. Members without
+    /// a social account simply don't appear here (their rows show initials).
+    var avatarByRecordName: [String: AvatarConfig] = [:]
     /// Every completion event in the household (who completed what, when). Retained
     /// from the load so gamification can credit a member for their shared completions
     /// without a second CloudKit fetch. Defaulted so other constructors keep compiling.
@@ -306,6 +315,16 @@ struct HouseholdService {
         return assignees.isEmpty || assignees.contains(myName) || completedByMembers.contains(myName)
     }
 
+    /// Merges one entry into a JSON-encoded `[String: V]` map field (e.g. `memberNames`,
+    /// `memberAvatars`), re-reading whatever the record currently holds so concurrent
+    /// additions by *other* members survive a conflict retry. Passing `nil` removes the
+    /// key. Pure, so the merge semantics are unit-tested without CloudKit.
+    static func mergedMap<V: Codable>(_ existing: Data?, setting key: String, to value: V?) -> [String: V] {
+        var map = existing.flatMap { try? JSONDecoder().decode([String: V].self, from: $0) } ?? [:]
+        map[key] = value
+        return map
+    }
+
     /// The completion records `by` should remove when they un-check a chore for
     /// `occurrence` — *only that person's* completion(s), so other members' check-offs
     /// survive (per-person check-off). Pure so it can be unit-tested.
@@ -483,7 +502,8 @@ struct HouseholdService {
         }
     }
 
-    func households(currentUserRecordName: String? = nil, currentUserDisplayName: String = "") async throws -> [Household] {
+    func households(currentUserRecordName: String? = nil, currentUserDisplayName: String = "",
+                    currentUserAvatar: AvatarConfig? = nil) async throws -> [Household] {
         var result: [Household] = []
         for scope in [CKDatabase.Scope.private, .shared] {
             let db = database(scope)
@@ -494,13 +514,17 @@ struct HouseholdService {
                 let name = root["name"] as? String ?? "Household"
 
                 let share = records.compactMap { $0 as? CKShare }.first
-                // Self-published member names keyed by CloudKit user record name.
+                // Self-published member names + avatars keyed by CloudKit user record name.
                 let nameByRecordName = (root["memberNames"] as? Data)
                     .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
+                let avatarByRecordName = (root["memberAvatars"] as? Data)
+                    .flatMap { try? JSONDecoder().decode([String: AvatarConfig].self, from: $0) } ?? [:]
                 let members = share.map {
                     householdMembers(of: $0, currentUserRecordName: currentUserRecordName,
                                      currentUserDisplayName: currentUserDisplayName,
-                                     nameByRecordName: nameByRecordName)
+                                     currentUserAvatar: currentUserAvatar,
+                                     nameByRecordName: nameByRecordName,
+                                     avatarByRecordName: avatarByRecordName)
                 } ?? []
                 // My resolved member name — used to bake each chore's per-user `isDone`.
                 let myName = members.first(where: \.isCurrentUser)?.name
@@ -579,6 +603,7 @@ struct HouseholdService {
                                         zoneID: zone.zoneID, scope: scope,
                                         members: members, chores: chores,
                                         nameByRecordName: nameByRecordName,
+                                        avatarByRecordName: avatarByRecordName,
                                         completions: completionFacts))
             }
         }
@@ -611,9 +636,12 @@ struct HouseholdService {
         case .upsertChore(_, let zone, let householdID, let recordName, let draft):
             let db = database(zone.scope)
             let recordID = CKRecord.ID(recordName: recordName, zoneID: zone.zoneID)
-            let record = (try? await db.record(for: recordID)) ?? choreRecord(id: recordID, householdID: householdID, zone: zone)
-            apply(draft, to: record)
-            _ = try await db.save(record)
+            // Conflict-safe: on a concurrent edit, re-apply this draft's fields onto the
+            // server record (field-level last-write-wins) instead of failing the outbox.
+            try await saveMerging(recordID, in: db,
+                                  createIfMissing: { choreRecord(id: recordID, householdID: householdID, zone: zone) }) {
+                apply(draft, to: $0)
+            }
 
         case .deleteChore(_, let zone, let recordName):
             do {
@@ -757,10 +785,15 @@ struct HouseholdService {
             let current = (record["assignees"] as? [String])
                 ?? (record["assignee"] as? String).map { [$0] } ?? []
             guard current.contains(memberName) else { continue }
-            let remaining = current.filter { $0 != memberName }
-            record["assignees"] = remaining.isEmpty ? nil : remaining
-            record["assignee"] = nil
-            _ = try? await db.save(record)
+            // Conflict-safe: re-read assignees from whatever's current on save (a member
+            // could have been (re)assigned meanwhile) and drop only `memberName`.
+            try? await saveMerging(record.recordID, in: db) { rec in
+                let now = (rec["assignees"] as? [String])
+                    ?? (rec["assignee"] as? String).map { [$0] } ?? []
+                let remaining = now.filter { $0 != memberName }
+                rec["assignees"] = remaining.isEmpty ? nil : remaining
+                rec["assignee"] = nil
+            }
         }
     }
 
@@ -843,21 +876,29 @@ struct HouseholdService {
         return (share, container)
     }
 
-    /// Writes a member's display name onto the household root record's `memberNames`
-    /// map (keyed by CloudKit user record name), so other members can show their real
-    /// name. No-ops if the name is already current. Any member may call this for
-    /// themselves (they have read-write on the shared zone).
-    func publishMemberName(_ displayName: String, recordName: String, in household: Household) async throws {
-        guard !recordName.isEmpty, !displayName.isEmpty else { return }
-        let db = database(household.scope)
+    /// Writes a member's display name (and optional character avatar) onto the
+    /// household root record's `memberNames` / `memberAvatars` maps (keyed by CloudKit
+    /// user record name), so other members can show their real name and face — CloudKit
+    /// won't share either across users. No-ops if both are already current. Any member
+    /// may call this for themselves (they have read-write on the shared zone). The write
+    /// is conflict-safe (`saveMerging`), so two members publishing at once don't clobber
+    /// each other's entries.
+    func publishMemberIdentity(name: String, avatar: AvatarConfig?, recordName: String,
+                               in household: Household) async throws {
+        guard !recordName.isEmpty, !name.isEmpty else { return }
+        // Skip a redundant root write when nothing changed for this member.
+        guard household.nameByRecordName[recordName] != name
+                || (avatar != nil && household.avatarByRecordName[recordName] != avatar) else { return }
         let rootID = CKRecord.ID(recordName: household.id, zoneID: household.zoneID)
-        let root = try await db.record(for: rootID)
-        var map = (root["memberNames"] as? Data)
-            .flatMap { try? JSONDecoder().decode([String: String].self, from: $0) } ?? [:]
-        guard map[recordName] != displayName else { return }
-        map[recordName] = displayName
-        root["memberNames"] = try? JSONEncoder().encode(map)
-        _ = try await db.save(root)
+        try await saveMerging(rootID, in: database(household.scope)) { root in
+            let names = Self.mergedMap(root["memberNames"] as? Data, setting: recordName, to: name)
+            root["memberNames"] = try? JSONEncoder().encode(names)
+            if let avatar {
+                let avatars: [String: AvatarConfig] = Self.mergedMap(
+                    root["memberAvatars"] as? Data, setting: recordName, to: avatar)
+                root["memberAvatars"] = try? JSONEncoder().encode(avatars)
+            }
+        }
     }
 
     // MARK: - In-app invitations
@@ -871,8 +912,10 @@ struct HouseholdService {
         guard let recordName = profile.cloudUserRecordName else { throw HouseholdError.inviteeNeedsUpdate }
         // Authorize them on the share, then publish the invite carrying its URL.
         try await addFriend(userRecordName: recordName, to: household)
-        // Seed their display name so members see it immediately (before they open the app).
-        try? await publishMemberName(profile.displayName, recordName: recordName, in: household)
+        // Seed their display name + avatar so members see them immediately (before they
+        // even open the app).
+        try? await publishMemberIdentity(name: profile.displayName, avatar: profile.avatarConfig,
+                                         recordName: recordName, in: household)
         guard let (share, _) = try await share(for: household), let url = share.url else {
             throw HouseholdError.noShare
         }
@@ -963,12 +1006,48 @@ struct HouseholdService {
     // MARK: - Helpers
 
     private func update(_ chore: SharedChore, in household: Household,
-                        _ mutate: (CKRecord) -> Void) async throws {
-        let db = database(household.scope)
+                        _ mutate: @escaping (CKRecord) -> Void) async throws {
         let id = CKRecord.ID(recordName: chore.id, zoneID: household.zoneID)
-        let record = try await db.record(for: id)
-        mutate(record)
-        _ = try await db.save(record)
+        try await saveMerging(id, in: database(household.scope), mutate)
+    }
+
+    /// Saves a record after applying `mutate`, resolving write conflicts instead of
+    /// failing or clobbering: on CloudKit's `serverRecordChanged` it adopts the
+    /// server's copy (latest change tag + any fields another member changed
+    /// concurrently) and **re-applies `mutate` onto it**, then retries. This gives
+    /// field-level last-write-wins for the fields `mutate` touches while preserving
+    /// concurrent edits to *other* fields; map fields (`memberNames`, `memberAvatars`)
+    /// re-merge per key because their `mutate` re-reads the record. `mutate` must be
+    /// idempotent (safe to run on each attempt) — the chore writers and map writers are.
+    @discardableResult
+    private func saveMerging(_ recordID: CKRecord.ID, in db: CKDatabase,
+                             createIfMissing: (() -> CKRecord)? = nil,
+                             maxRetries: Int = 4,
+                             _ mutate: (CKRecord) -> Void) async throws -> CKRecord {
+        var record: CKRecord
+        if let existing = try? await db.record(for: recordID) {
+            record = existing
+        } else if let createIfMissing {
+            record = createIfMissing()
+        } else {
+            record = try await db.record(for: recordID)   // re-throw the real fetch error
+        }
+        var attempt = 0
+        while true {
+            mutate(record)
+            do {
+                return try await db.save(record)
+            } catch let error as CKError where error.code == .serverRecordChanged && attempt < maxRetries {
+                attempt += 1
+                // Adopt the server's record (its change tag + other members' concurrent
+                // changes) and loop to re-apply our mutation on top.
+                if let server = error.serverRecord {
+                    record = server
+                } else {
+                    record = try await db.record(for: recordID)
+                }
+            }
+        }
     }
 
     /// Fetches every record in a zone via zone changes — works in custom/shared
@@ -1003,7 +1082,9 @@ struct HouseholdService {
     /// record id fetched separately, and anonymous users have no such id at all.
     private func householdMembers(of share: CKShare, currentUserRecordName: String?,
                                   currentUserDisplayName: String,
-                                  nameByRecordName: [String: String]) -> [HouseholdMember] {
+                                  currentUserAvatar: AvatarConfig?,
+                                  nameByRecordName: [String: String],
+                                  avatarByRecordName: [String: AvatarConfig]) -> [HouseholdMember] {
         let formatter = PersonNameComponentsFormatter()
         let currentParticipant = share.currentUserParticipant
         return share.participants.enumerated().map { index, participant in
@@ -1029,9 +1110,25 @@ struct HouseholdService {
 
             let hasResolvedName = resolved != nil
             let name = resolved ?? (isOwner ? String(localized: "Owner") : String(localized: "Member"))
+            // Resolve the member's avatar: the current user's own from their account
+            // (we don't publish to ourselves); everyone else's from the published map.
+            let avatar: AvatarConfig?
+            if isCurrentUser {
+                avatar = currentUserAvatar
+            } else if let rn = recordName {
+                avatar = avatarByRecordName[rn]
+            } else {
+                avatar = nil
+            }
             return HouseholdMember(id: recordName ?? "\(name)#\(index)", name: name,
                                    isOwner: isOwner, isCurrentUser: isCurrentUser,
-                                   hasResolvedName: hasResolvedName)
+                                   hasResolvedName: hasResolvedName, avatarConfig: avatar)
         }
     }
+}
+
+extension CKError {
+    /// The server's copy of a record from a `serverRecordChanged` conflict, used by
+    /// `saveMerging` to re-apply a mutation onto the latest version.
+    var serverRecord: CKRecord? { userInfo[CKRecordChangedErrorServerRecordKey] as? CKRecord }
 }

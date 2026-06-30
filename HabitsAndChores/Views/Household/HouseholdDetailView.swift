@@ -50,13 +50,16 @@ struct HouseholdDetailView: View {
 
             Section("Members") {
                 ForEach(household.members) { member in
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text(member.name)
-                        if member.isOwner && member.hasResolvedName {
-                            Text(member.isCurrentUser ? "Owner · You" : "Owner")
-                                .font(.caption).foregroundStyle(.secondary)
-                        } else if member.isCurrentUser {
-                            Text("You").font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 10) {
+                        AvatarView(config: member.avatarConfig, fallbackText: member.name, size: 32)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(member.name)
+                            if member.isOwner && member.hasResolvedName {
+                                Text(member.isCurrentUser ? "Owner · You" : "Owner")
+                                    .font(.caption).foregroundStyle(.secondary)
+                            } else if member.isCurrentUser {
+                                Text("You").font(.caption).foregroundStyle(.secondary)
+                            }
                         }
                     }
                     .swipeActions(edge: .trailing) {

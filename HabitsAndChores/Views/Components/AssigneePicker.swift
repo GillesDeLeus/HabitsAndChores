@@ -19,7 +19,8 @@ struct AssigneePicker: View {
                 else { selection.insert(member.name) }
                 onChange()
             } label: {
-                HStack {
+                HStack(spacing: 10) {
+                    AvatarView(config: member.avatarConfig, fallbackText: member.name, size: 28)
                     Text(member.name).foregroundStyle(.primary)
                     Spacer()
                     if selection.contains(member.name) {

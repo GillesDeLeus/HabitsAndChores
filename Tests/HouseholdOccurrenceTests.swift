@@ -203,4 +203,38 @@ final class HouseholdOccurrenceTests: XCTestCase {
         XCTAssertEqual(targets.first?["completedBy"] as? String, "Alex")
         XCTAssertEqual(targets.first?["choreID"] as? String, "c1")
     }
+
+    // MARK: Conflict-merge (member name / avatar maps)
+
+    func testMergedMapAddsToEmpty() {
+        let map = HouseholdService.mergedMap(nil, setting: "userA", to: "Alex") as [String: String]
+        XCTAssertEqual(map, ["userA": "Alex"])
+    }
+
+    func testMergedMapPreservesConcurrentEntriesOnConflict() throws {
+        // Simulate the conflict path: the server record already has another member's
+        // entry; re-merging my key must keep theirs (not clobber the whole map).
+        let server = try JSONEncoder().encode(["userB": "Bo"])
+        let merged = HouseholdService.mergedMap(server, setting: "userA", to: "Alex") as [String: String]
+        XCTAssertEqual(merged, ["userA": "Alex", "userB": "Bo"])
+    }
+
+    func testMergedMapOverwritesOwnKeyAndRemovesOnNil() throws {
+        let base = try JSONEncoder().encode(["userA": "Alex"])
+        let updated = HouseholdService.mergedMap(base, setting: "userA", to: "Alexandra") as [String: String]
+        XCTAssertEqual(updated["userA"], "Alexandra")
+        let removed = HouseholdService.mergedMap(base, setting: "userA", to: String?.none) as [String: String]
+        XCTAssertNil(removed["userA"])
+    }
+
+    func testMergedMapWorksForAvatarConfigValues() throws {
+        // The avatar map is [String: AvatarConfig]; the same merge keeps a co-member's
+        // avatar while adding mine.
+        var mine = AvatarConfig(); mine.hair = 3
+        var theirs = AvatarConfig(); theirs.hair = 5
+        let server = try JSONEncoder().encode(["userB": theirs])
+        let merged = HouseholdService.mergedMap(server, setting: "userA", to: mine) as [String: AvatarConfig]
+        XCTAssertEqual(merged["userA"], mine)
+        XCTAssertEqual(merged["userB"], theirs)
+    }
 }
