@@ -67,20 +67,6 @@ struct TaskListView: View {
                 }
             } else {
                 activeContent
-                if !sharedChores.isEmpty {
-                    Section(header: Text("Shared")) {
-                        ForEach(sharedChores, id: \.chore.id) { item in
-                            NavigationLink {
-                                AddEditTaskView(shared: item.chore, in: item.household)
-                            } label: {
-                                SharedTaskInfoRow(chore: item.chore, householdName: item.household.name)
-                            }
-                        }
-                        .onDelete { offsets in
-                            offsets.map { sharedChores[$0] }.forEach { households.delete($0.chore, in: $0.household) }
-                        }
-                    }
-                }
                 if !archived.isEmpty {
                     Section(header: Text("Archived")) {
                         ForEach(archived) { task in
@@ -152,21 +138,25 @@ struct TaskListView: View {
                 ForEach(active) { task in taskLink(task) }
                     .onMove(perform: (search.isEmpty && !isFiltering) ? moveActive : nil)
                     .onDelete { archive(active, at: $0) }
+                ForEach(sharedChores, id: \.chore.id) { item in sharedLink(item) }
+                    .onDelete { offsets in
+                        offsets.map { sharedChores[$0] }.forEach { households.delete($0.chore, in: $0.household) }
+                    }
             }
         case .title:
             Section(header: Text("Active")) {
-                ForEach(active.sorted { $0.title.localizedCompare($1.title) == .orderedAscending }) { task in
-                    taskLink(task)
-                }
+                ForEach(mergedByTitle) { item in mergedLink(item) }
             }
         case .category:
             ForEach(TaskCategory.allCases) { category in
-                let items = active.filter { $0.category == category }
-                if !items.isEmpty {
+                let personal = active.filter { $0.category == category }
+                    .sorted { $0.title.localizedCompare($1.title) == .orderedAscending }
+                let shared = sharedChores.filter { $0.chore.category == category }
+                    .sorted { $0.chore.title.localizedCompare($1.chore.title) == .orderedAscending }
+                if !personal.isEmpty || !shared.isEmpty {
                     Section(header: Text(category.localizedName)) {
-                        ForEach(items.sorted { $0.title.localizedCompare($1.title) == .orderedAscending }) { task in
-                            taskLink(task)
-                        }
+                        ForEach(personal) { task in taskLink(task) }
+                        ForEach(shared, id: \.chore.id) { item in sharedLink(item) }
                     }
                 }
             }
@@ -175,6 +165,44 @@ struct TaskListView: View {
 
     private func taskLink(_ task: TaskItem) -> some View {
         NavigationLink { AddEditTaskView(task: task) } label: { TaskInfoRow(task: task) }
+    }
+
+    private func sharedLink(_ item: (household: Household, chore: SharedChore)) -> some View {
+        NavigationLink { AddEditTaskView(shared: item.chore, in: item.household) } label: {
+            SharedTaskInfoRow(chore: item.chore, householdName: item.household.name)
+        }
+    }
+
+    // Unified item for title-sorted display of personal + shared tasks together.
+    private enum MergedItem: Identifiable {
+        case task(TaskItem)
+        case chore(Household, SharedChore)
+        var id: String {
+            switch self {
+            case .task(let t): return t.id.uuidString
+            case .chore(_, let c): return c.id
+            }
+        }
+        var title: String {
+            switch self {
+            case .task(let t): return t.title
+            case .chore(_, let c): return c.title
+            }
+        }
+    }
+
+    private var mergedByTitle: [MergedItem] {
+        let personal = active.map { MergedItem.task($0) }
+        let shared = sharedChores.map { MergedItem.chore($0.household, $0.chore) }
+        return (personal + shared).sorted { $0.title.localizedCompare($1.title) == .orderedAscending }
+    }
+
+    @ViewBuilder
+    private func mergedLink(_ item: MergedItem) -> some View {
+        switch item {
+        case .task(let task): taskLink(task)
+        case .chore(let household, let chore): sharedLink((household, chore))
+        }
     }
 
     private func moveActive(from source: IndexSet, to destination: Int) {
