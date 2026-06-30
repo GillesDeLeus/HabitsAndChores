@@ -1,4 +1,5 @@
 import XCTest
+import CloudKit
 @testable import HabitsAndChores
 
 final class HouseholdOccurrenceTests: XCTestCase {
@@ -84,14 +85,14 @@ final class HouseholdOccurrenceTests: XCTestCase {
         let chore = SharedChore(id: "1", title: "Bins", details: "out front",
                                 kindRaw: TaskKind.chore.rawValue, categoryRaw: TaskCategory.home.rawValue,
                                 frequency: .weekly(on: [3]), symbolName: "trash.fill", colorHue: 0.1,
-                                createdAt: .now, assignee: "Sam", isDone: false, completedBy: nil)
+                                createdAt: .now, assignees: ["Sam"], completedByMembers: [], isDone: false)
         let draft = ChoreDraft(chore)
         XCTAssertEqual(draft.title, "Bins")
         XCTAssertEqual(draft.details, "out front")
         XCTAssertEqual(draft.kind, .chore)
         XCTAssertEqual(draft.category, .home)
         XCTAssertEqual(draft.symbolName, "trash.fill")
-        XCTAssertEqual(draft.assignee, "Sam")
+        XCTAssertEqual(draft.assignees, ["Sam"])
         XCTAssertEqual(draft.frequency, .weekly(on: [3]))
         XCTAssertFalse(draft.isTodo)
     }
@@ -102,7 +103,7 @@ final class HouseholdOccurrenceTests: XCTestCase {
         let chore = SharedChore(id: "2", title: "Pay rent", details: "",
                                 kindRaw: TaskKind.chore.rawValue, categoryRaw: TaskCategory.finance.rawValue,
                                 frequency: .daily, symbolName: "creditcard.fill", colorHue: 0.2,
-                                createdAt: .now, assignee: "Alex", isDone: false, completedBy: nil,
+                                createdAt: .now, assignees: ["Alex"], completedByMembers: [], isDone: false,
                                 isTodo: true, dueDate: due, priorityRaw: TodoPriority.high.rawValue,
                                 reminderModeRaw: TodoReminderMode.atTime.rawValue, reminderDate: remind,
                                 reminderOffset: 0)
@@ -112,7 +113,7 @@ final class HouseholdOccurrenceTests: XCTestCase {
         XCTAssertEqual(draft.priority, .high)
         XCTAssertEqual(draft.todoReminderMode, .atTime)
         XCTAssertEqual(draft.reminderDate, remind)
-        XCTAssertEqual(draft.assignee, "Alex")
+        XCTAssertEqual(draft.assignees, ["Alex"])
     }
 
     // MARK: To-do vs recurring completion key
@@ -121,7 +122,7 @@ final class HouseholdOccurrenceTests: XCTestCase {
         let todo = SharedChore(id: "3", title: "X", details: "",
                                kindRaw: TaskKind.chore.rawValue, categoryRaw: TaskCategory.other.rawValue,
                                frequency: .daily, symbolName: "checklist", colorHue: 0.5,
-                               createdAt: .now, assignee: nil, isDone: false, completedBy: nil, isTodo: true)
+                               createdAt: .now, assignees: [], completedByMembers: [], isDone: false, isTodo: true)
         XCTAssertEqual(HouseholdService.occurrence(for: todo), HouseholdService.todoOccurrence)
     }
 
@@ -129,7 +130,7 @@ final class HouseholdOccurrenceTests: XCTestCase {
         let chore = SharedChore(id: "4", title: "X", details: "",
                                 kindRaw: TaskKind.chore.rawValue, categoryRaw: TaskCategory.other.rawValue,
                                 frequency: .daily, symbolName: "checklist", colorHue: 0.5,
-                                createdAt: date(2026, 6, 1), assignee: nil, isDone: false, completedBy: nil)
+                                createdAt: date(2026, 6, 1), assignees: [], completedByMembers: [], isDone: false)
         let result = HouseholdService.occurrence(for: chore, asOf: date(2026, 6, 13, 14), calendar: cal)
         XCTAssertEqual(result, date(2026, 6, 13))
     }
@@ -159,20 +160,47 @@ final class HouseholdOccurrenceTests: XCTestCase {
     // MARK: Today visibility (mine / unassigned / just-completed)
 
     func testMineForTodayShowsMineAndUnassigned() {
-        XCTAssertTrue(HouseholdService.isMineForToday(assignee: "Alex", isDone: false, completedBy: nil, myName: "Alex"))
-        XCTAssertTrue(HouseholdService.isMineForToday(assignee: nil, isDone: false, completedBy: nil, myName: "Alex"),
+        XCTAssertTrue(HouseholdService.isMineForToday(assignees: ["Alex"], completedByMembers: [], myName: "Alex"))
+        XCTAssertTrue(HouseholdService.isMineForToday(assignees: [], completedByMembers: [], myName: "Alex"),
                       "unassigned chores are up for grabs")
-        XCTAssertFalse(HouseholdService.isMineForToday(assignee: "Bo", isDone: false, completedBy: nil, myName: "Alex"),
+        XCTAssertFalse(HouseholdService.isMineForToday(assignees: ["Bo"], completedByMembers: [], myName: "Alex"),
                        "someone else's open chore isn't on my Today")
     }
 
     func testMineForTodayLingersForAChoreIJustCompletedAfterRotation() {
         // A rotating chore I completed: assignee has already rotated to Bo, but I'm
-        // the completer for this occurrence, so it stays on my Today (struck through).
-        XCTAssertTrue(HouseholdService.isMineForToday(assignee: "Bo", isDone: true, completedBy: "Alex", myName: "Alex"))
-        // Once the occurrence resets (isDone false) it's no longer mine — it's Bo's.
-        XCTAssertFalse(HouseholdService.isMineForToday(assignee: "Bo", isDone: false, completedBy: nil, myName: "Alex"))
+        // in the completer set for this occurrence, so it stays on my Today (struck through).
+        XCTAssertTrue(HouseholdService.isMineForToday(assignees: ["Bo"], completedByMembers: ["Alex"], myName: "Alex"))
+        // Once the occurrence resets (no completers) it's no longer mine — it's Bo's.
+        XCTAssertFalse(HouseholdService.isMineForToday(assignees: ["Bo"], completedByMembers: [], myName: "Alex"))
         // A chore someone *else* completed doesn't show on my Today via this clause.
-        XCTAssertFalse(HouseholdService.isMineForToday(assignee: "Sam", isDone: true, completedBy: "Bo", myName: "Alex"))
+        XCTAssertFalse(HouseholdService.isMineForToday(assignees: ["Sam"], completedByMembers: ["Bo"], myName: "Alex"))
+    }
+
+    // MARK: Per-person un-complete
+
+    private func completion(choreID: String, date: Date, by: String) -> CKRecord {
+        let rec = CKRecord(recordType: "SharedCompletion")
+        rec["choreID"] = choreID
+        rec["date"] = date
+        rec["completedBy"] = by
+        return rec
+    }
+
+    func testUnCompleteRemovesOnlyMyCompletion() {
+        // Two members completed the same occurrence; when Alex un-checks, only Alex's
+        // record is targeted for deletion — Bo's tick survives (per-person check-off).
+        let occ = date(2026, 6, 15)
+        let records = [
+            completion(choreID: "c1", date: occ, by: "Alex"),
+            completion(choreID: "c1", date: date(2026, 6, 15, 9), by: "Bo"), // same day, diff time
+            completion(choreID: "c1", date: date(2026, 6, 14), by: "Alex"),  // earlier occurrence
+            completion(choreID: "c2", date: occ, by: "Alex"),                // different chore
+        ]
+        let targets = HouseholdService.completionsToRemove(
+            from: records, choreRecordName: "c1", occurrence: occ, by: "Alex", calendar: cal)
+        XCTAssertEqual(targets.count, 1)
+        XCTAssertEqual(targets.first?["completedBy"] as? String, "Alex")
+        XCTAssertEqual(targets.first?["choreID"] as? String, "c1")
     }
 }

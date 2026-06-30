@@ -39,7 +39,7 @@ struct TodoEditView: View {
 
     // Sharing
     @State private var householdID: String?     // nil = Private
-    @State private var assignee: String?
+    @State private var assignees: Set<String> = []   // member names; empty = unassigned
     @State private var loaded = false
 
     private var existingTodo: TodoItem? {
@@ -118,16 +118,15 @@ struct TodoEditView: View {
                         ForEach(households.households) { Text($0.name).tag(String?.some($0.id)) }
                     }
                     if let household = selectedHousehold {
-                        Picker("Assignee", selection: $assignee) {
-                            Text("Unassigned").tag(String?.none)
-                            ForEach(household.members) { Text($0.name).tag(String?.some($0.name)) }
-                        }
+                        AssigneePicker(members: household.members, selection: $assignees)
                     }
                 } header: {
                     Text("Sharing")
                 } footer: {
                     if householdID == nil {
                         Text("Private to-dos stay on your devices. Choose a household to share and assign this to-do.")
+                    } else if assignees.count > 1 {
+                        Text("Each assignee gets their own checkbox — the to-do is done once everyone has completed it.")
                     } else {
                         Text("Shared with everyone in the household. Moving a to-do between Private and a household resets its done state.")
                     }
@@ -220,7 +219,7 @@ struct TodoEditView: View {
             hasSchedule = chore.scheduledDate != nil
             if let s = chore.scheduledDate { scheduled = s }
             householdID = household.id
-            assignee = chore.assignee
+            assignees = Set(chore.assignees)
         }
     }
 
@@ -290,7 +289,7 @@ struct TodoEditView: View {
         draft.dueDate = hasDue ? due : nil
         draft.scheduledDate = hasSchedule ? Calendar.current.startOfDay(for: scheduled) : nil
         draft.priority = priority
-        draft.assignee = assignee
+        draft.assignees = assignees.sorted()
         let mode = resolvedReminderMode
         draft.todoReminderMode = mode
         switch mode {

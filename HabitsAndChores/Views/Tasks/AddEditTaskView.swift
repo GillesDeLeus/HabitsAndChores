@@ -43,7 +43,7 @@ struct AddEditTaskView: View {
 
     // Sharing
     @State private var householdID: String?     // nil = Private
-    @State private var assignee: String?
+    @State private var assignees: Set<String> = []   // member names; empty = unassigned
     @State private var rotates = false
     @State private var loaded = false
 
@@ -132,11 +132,13 @@ struct AddEditTaskView: View {
                     ForEach(households.households) { Text($0.name).tag(String?.some($0.id)) }
                 }
                 if let household = selectedHousehold {
-                    Picker("Assignee", selection: $assignee) {
-                        Text("Unassigned").tag(String?.none)
-                        ForEach(household.members) { Text($0.name).tag(String?.some($0.name)) }
+                    AssigneePicker(members: household.members, selection: $assignees,
+                                   onChange: { reconcileRotation() })
+                    // Rotation is a single-owner concept — only offered while at most one
+                    // member is assigned.
+                    if assignees.count <= 1 {
+                        Toggle("Rotate between members", isOn: $rotates)
                     }
-                    Toggle("Rotate between members", isOn: $rotates)
                 }
             } header: {
                 Text("Sharing")
@@ -145,6 +147,8 @@ struct AddEditTaskView: View {
                     Text("Private tasks stay on your devices. Choose a household to share and assign this task.")
                 } else if rotates {
                     Text("After each completion this chore passes to the next member automatically. The assignee above is who's up first.")
+                } else if assignees.count > 1 {
+                    Text("Each assignee gets their own checkbox — the chore is done once everyone has completed it.")
                 } else {
                     Text("Shared with everyone in the household. Moving a task between Private and a household resets its completion history.")
                 }
@@ -247,19 +251,19 @@ struct AddEditTaskView: View {
             apply(title: task.title, details: task.details, kind: task.kind, category: task.category,
                   symbolName: task.symbolName, colorHue: task.colorHue, frequency: task.frequency,
                   reminderHour: task.reminderHour, reminderMinute: task.reminderMinute,
-                  householdID: nil, assignee: nil, rotates: false)
+                  householdID: nil, assignees: [], rotates: false)
         case .shared(let household, let chore):
             apply(title: chore.title, details: chore.details, kind: chore.kind, category: chore.category,
                   symbolName: chore.symbolName, colorHue: chore.colorHue, frequency: chore.frequency,
                   reminderHour: chore.reminderHour, reminderMinute: chore.reminderMinute,
-                  householdID: household.id, assignee: chore.assignee, rotates: chore.rotates)
+                  householdID: household.id, assignees: chore.assignees, rotates: chore.rotates)
         }
     }
 
     private func apply(title: String, details: String, kind: TaskKind, category: TaskCategory,
                        symbolName: String, colorHue: Double, frequency f: FrequencyRule,
                        reminderHour: Int?, reminderMinute: Int?, householdID: String?,
-                       assignee: String?, rotates: Bool) {
+                       assignees: [String], rotates: Bool) {
         self.title = title
         self.details = details
         self.kind = kind
@@ -276,8 +280,14 @@ struct AddEditTaskView: View {
             reminderTime = Calendar.current.date(bySettingHour: h, minute: m, second: 0, of: .now) ?? .now
         }
         self.householdID = householdID
-        self.assignee = assignee
+        self.assignees = Set(assignees)
         self.rotates = rotates
+    }
+
+    /// Rotation and multi-assignee are mutually exclusive — collapsing to multiple
+    /// assignees turns rotation off.
+    private func reconcileRotation() {
+        if assignees.count > 1 { rotates = false }
     }
 
     private func save() {
@@ -339,7 +349,7 @@ struct AddEditTaskView: View {
         draft.symbolName = symbolName
         draft.colorHue = colorHue
         draft.frequency = buildFrequency()
-        draft.assignee = assignee
+        draft.assignees = assignees.sorted()
         draft.reminderHour = hour
         draft.reminderMinute = minute
         draft.rotates = rotates

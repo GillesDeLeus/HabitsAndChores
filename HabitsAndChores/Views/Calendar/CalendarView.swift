@@ -203,7 +203,7 @@ struct CalendarView: View {
         guard !calendar.isDateInToday(day) else { return chore }
         var copy = chore
         copy.isDone = false
-        copy.completedBy = nil
+        copy.completedByMembers = []
         return copy
     }
 

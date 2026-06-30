@@ -85,7 +85,7 @@ enum HouseholdMutation: Codable, Identifiable {
     case upsertChore(opID: String, zone: ZoneRef, householdID: String, recordName: String, draft: ChoreDraft)
     case deleteChore(opID: String, zone: ZoneRef, recordName: String)
     case setCompletion(opID: String, zone: ZoneRef, choreRecordName: String, occurrence: Date, by: String, done: Bool, completionRecordName: String)
-    case assign(opID: String, zone: ZoneRef, choreRecordName: String, member: String?)
+    case assign(opID: String, zone: ZoneRef, choreRecordName: String, members: [String])
 
     var id: String {
         switch self {
@@ -121,9 +121,20 @@ struct SharedChore: Identifiable {
     var symbolName: String
     var colorHue: Double
     var createdAt: Date             // recurrence anchor (CloudKit creation date)
-    var assignee: String?           // member display name, or nil = unassigned
-    var isDone: Bool                // completed for the current occurrence
-    var completedBy: String?        // who completed the current occurrence
+    var assignees: [String]         // member display names; empty = unassigned (up for grabs)
+    /// Everyone who has completed the *current* occurrence (per-person check-off).
+    /// A single `SharedChore` can be assigned to several members, each of whom checks
+    /// it off independently — the chore is fully done only once every assignee appears
+    /// here (see `isFullyDone`). Empty = nobody has completed this occurrence.
+    var completedByMembers: Set<String> = []
+    /// "Done from *my* perspective" — true when the current user has checked off the
+    /// current occurrence (or, when unassigned/anonymous, when anyone has). Baked at
+    /// load time so the many row/calendar/stat call sites stay per-user without each
+    /// needing my name. Kept in sync optimistically in `HouseholdsModel.setDone`.
+    var isDone: Bool
+    /// A representative completer for the "Done by X" caption (the alphabetically
+    /// first member who completed the current occurrence), derived from `completedByMembers`.
+    var completedBy: String? { completedByMembers.sorted().first }
 
     // To-do discriminator + one-off fields. Defaulted so the existing positional
     // initializers (recurring chores) keep compiling unchanged.
@@ -136,8 +147,9 @@ struct SharedChore: Identifiable {
     var reminderOffset: Double = 0
     var reminderHour: Int? = nil    // recurring-chore reminder time-of-day
     var reminderMinute: Int? = nil
-    /// When true, the assignee rotates to the next household member after each
-    /// completion (round-robin). When false, it stays put.
+    /// When true, the (single) assignee rotates to the next household member after each
+    /// completion (round-robin). When false, it stays put. Mutually exclusive with
+    /// multiple assignees — rotation is a single-owner concept.
     var rotates: Bool = false
 
     var kind: TaskKind { TaskKind(rawValue: kindRaw) ?? .chore }
@@ -147,11 +159,37 @@ struct SharedChore: Identifiable {
     var hasReminder: Bool {
         isTodo ? todoReminderMode != .none : (reminderHour != nil && reminderMinute != nil)
     }
-    /// A scheduled to-do that's not yet done and due to surface on/before `day`.
+    /// A scheduled to-do that's not yet done *by me* and due to surface on/before `day`.
+    /// (`isDone` is my-perspective, so a to-do I've finished stops surfacing as
+    /// outstanding even while other assignees still have it open.)
     func isScheduledTodo(onOrBefore day: Date, calendar: Calendar = .current) -> Bool {
         guard isTodo, !isDone, let scheduledDate else { return false }
         return calendar.startOfDay(for: scheduledDate) <= calendar.startOfDay(for: day)
     }
+
+    /// Whether `member` has checked off the current occurrence. With no name (an
+    /// anonymous user), falls back to "anyone has completed it".
+    func isDone(for member: String?) -> Bool {
+        guard let member else { return !completedByMembers.isEmpty }
+        return completedByMembers.contains(member)
+    }
+    /// Fully done for the current occurrence: every assignee has checked off (or, when
+    /// unassigned/up-for-grabs, anyone has).
+    var isFullyDone: Bool {
+        assignees.isEmpty ? !completedByMembers.isEmpty
+                          : assignees.allSatisfy(completedByMembers.contains)
+    }
+    /// How many of the assignees have checked off (for the "N of M done" caption).
+    /// Unassigned chores report 1/1 once anyone completes them.
+    var completedAssigneeCount: Int {
+        assignees.isEmpty ? (completedByMembers.isEmpty ? 0 : 1)
+                          : assignees.filter(completedByMembers.contains).count
+    }
+    /// Total expected completers (the assignee count, or 1 for an unassigned chore).
+    var assigneeTarget: Int { assignees.isEmpty ? 1 : assignees.count }
+    /// True when the chore is shared across more than one assignee (drives the
+    /// per-person "N of M" progress display instead of a single "Done by X").
+    var hasMultipleAssignees: Bool { assignees.count > 1 }
 }
 
 /// Editable fields for creating/updating a shared task (recurring chore or to-do).
@@ -164,7 +202,7 @@ struct ChoreDraft: Codable {
     var symbolName = "house.fill"
     var colorHue = 0.58
     var frequency: FrequencyRule = .daily
-    var assignee: String?
+    var assignees: [String] = []    // member display names; empty = unassigned
 
     // To-do fields (used when `isTodo` is true).
     var isTodo = false
@@ -177,7 +215,8 @@ struct ChoreDraft: Codable {
     // Recurring-chore reminder time-of-day.
     var reminderHour: Int?
     var reminderMinute: Int?
-    /// Rotate the assignee among members after each completion.
+    /// Rotate the (single) assignee among members after each completion. Mutually
+    /// exclusive with multiple assignees.
     var rotates = false
     /// Immutable recurrence anchor (the chore's "start day"), captured client-side at
     /// creation and persisted so the schedule never shifts. Without this the anchor
@@ -198,7 +237,7 @@ struct ChoreDraft: Codable {
         symbolName = chore.symbolName
         colorHue = chore.colorHue
         frequency = chore.frequency
-        assignee = chore.assignee
+        assignees = chore.assignees
         isTodo = chore.isTodo
         dueDate = chore.dueDate
         scheduledDate = chore.scheduledDate
@@ -258,11 +297,27 @@ struct HouseholdService {
     /// unassigned (up for grabs), or something I completed for the current occurrence.
     /// The last clause is what keeps a chore I just finished visible (struck through)
     /// instead of vanishing the instant a rotating chore reassigns itself to the next
-    /// member. It clears on its own when the occurrence resets (`isDone` goes false).
-    /// `completedBy` must be stamped with the same `myName` used here (see `setDone`).
-    static func isMineForToday(assignee: String?, isDone: Bool, completedBy: String?,
+    /// member. It clears on its own when the occurrence resets.
+    /// `completedByMembers` must contain the same `myName` used here (see `setDone`).
+    /// An anonymous user (no `myName`) only ever sees unassigned chores.
+    static func isMineForToday(assignees: [String], completedByMembers: Set<String>,
                                myName: String?) -> Bool {
-        assignee == nil || assignee == myName || (isDone && completedBy == myName)
+        guard let myName else { return assignees.isEmpty }
+        return assignees.isEmpty || assignees.contains(myName) || completedByMembers.contains(myName)
+    }
+
+    /// The completion records `by` should remove when they un-check a chore for
+    /// `occurrence` — *only that person's* completion(s), so other members' check-offs
+    /// survive (per-person check-off). Pure so it can be unit-tested.
+    static func completionsToRemove(from records: [CKRecord], choreRecordName: String,
+                                    occurrence: Date, by: String,
+                                    calendar: Calendar = .current) -> [CKRecord] {
+        records.filter {
+            $0.recordType == RecordType.completion
+                && $0["choreID"] as? String == choreRecordName
+                && ($0["date"] as? Date).map { calendar.startOfDay(for: $0) } == calendar.startOfDay(for: occurrence)
+                && $0["completedBy"] as? String == by
+        }
     }
 
     /// Round-robin assignee for a rotating chore. `names` is a stable (e.g. sorted)
@@ -447,6 +502,8 @@ struct HouseholdService {
                                      currentUserDisplayName: currentUserDisplayName,
                                      nameByRecordName: nameByRecordName)
                 } ?? []
+                // My resolved member name — used to bake each chore's per-user `isDone`.
+                let myName = members.first(where: \.isCurrentUser)?.name
 
                 // Group completion records by the chore they belong to.
                 let cal = Calendar.current
@@ -477,11 +534,21 @@ struct HouseholdService {
                         let occurrence = isTodo
                             ? Self.todoOccurrence
                             : Self.currentOccurrence(for: frequency, anchor: createdAt, calendar: cal)
-                        let match = completionsByChore[rec.recordID.recordName]?.first {
-                            isTodo
-                                ? ($0["date"] as? Date) == occurrence
-                                : ($0["date"] as? Date).map { cal.startOfDay(for: $0) } == occurrence
-                        }
+                        // Everyone who completed the current occurrence (per-person check-off).
+                        let completedByMembers = Set(
+                            (completionsByChore[rec.recordID.recordName] ?? [])
+                                .filter {
+                                    isTodo
+                                        ? ($0["date"] as? Date) == occurrence
+                                        : ($0["date"] as? Date).map { cal.startOfDay(for: $0) } == occurrence
+                                }
+                                .compactMap { $0["completedBy"] as? String }
+                                .filter { !$0.isEmpty }
+                        )
+                        // Assignees: prefer the new list field; fall back to the legacy
+                        // single `assignee` so existing records keep working.
+                        let assignees = (rec["assignees"] as? [String])
+                            ?? (rec["assignee"] as? String).map { [$0] } ?? []
                         return SharedChore(
                             id: rec.recordID.recordName,
                             title: rec["title"] as? String ?? "",
@@ -492,9 +559,9 @@ struct HouseholdService {
                             symbolName: rec["symbol"] as? String ?? "checklist",
                             colorHue: rec["colorHue"] as? Double ?? 0.58,
                             createdAt: createdAt,
-                            assignee: rec["assignee"] as? String,
-                            isDone: match != nil,
-                            completedBy: match?["completedBy"] as? String,
+                            assignees: assignees,
+                            completedByMembers: completedByMembers,
+                            isDone: myName.map(completedByMembers.contains) ?? !completedByMembers.isEmpty,
                             isTodo: isTodo,
                             dueDate: rec["dueDate"] as? Date,
                             scheduledDate: rec["scheduledDate"] as? Date,
@@ -568,20 +635,18 @@ struct HouseholdService {
                 record["chore"] = CKRecord.Reference(recordID: choreID, action: .deleteSelf)
                 _ = try await db.save(record)
             } else {
-                let cal = Calendar.current
+                // Per-person: remove only *my* completion, leaving co-assignees' ticks.
                 let all = (try? await allRecords(in: zone.zoneID, db: db)) ?? []
-                let targets = all.filter {
-                    $0.recordType == RecordType.completion
-                    && $0["choreID"] as? String == choreRecordName
-                    && ($0["date"] as? Date).map { cal.startOfDay(for: $0) } == cal.startOfDay(for: occurrence)
-                }
+                let targets = Self.completionsToRemove(from: all, choreRecordName: choreRecordName,
+                                                       occurrence: occurrence, by: by)
                 for target in targets { _ = try? await db.deleteRecord(withID: target.recordID) }
             }
 
-        case .assign(_, let zone, let choreRecordName, let member):
+        case .assign(_, let zone, let choreRecordName, let members):
             let db = database(zone.scope)
             let record = try await db.record(for: CKRecord.ID(recordName: choreRecordName, zoneID: zone.zoneID))
-            record["assignee"] = member
+            record["assignees"] = members.isEmpty ? nil : members
+            record["assignee"] = nil
             _ = try await db.save(record)
         }
     }
@@ -601,7 +666,10 @@ struct HouseholdService {
         record["category"] = draft.category.rawValue
         record["symbol"] = draft.symbolName
         record["colorHue"] = draft.colorHue
-        record["assignee"] = draft.assignee
+        // New multi-assignee list field; clear the legacy single `assignee` so the two
+        // never disagree (load prefers `assignees`, falling back to `assignee`).
+        record["assignees"] = draft.assignees.isEmpty ? nil : draft.assignees
+        record["assignee"] = nil
         record["frequency"] = try? JSONEncoder().encode(draft.frequency)
         record["isTodo"] = draft.isTodo
         record["dueDate"] = draft.dueDate
@@ -634,20 +702,19 @@ struct HouseholdService {
             record["chore"] = CKRecord.Reference(recordID: choreRecordID, action: .deleteSelf)
             _ = try await db.save(record)
         } else {
-            // Remove any completion for this chore at the current occurrence.
-            let cal = Calendar.current
+            // Per-person: remove only `by`'s completion for the occurrence.
             let all = (try? await allRecords(in: household.zoneID, db: db)) ?? []
-            let targets = all.filter {
-                $0.recordType == RecordType.completion
-                && $0["choreID"] as? String == chore.id
-                && ($0["date"] as? Date).map { cal.startOfDay(for: $0) } == occurrence
-            }
+            let targets = Self.completionsToRemove(from: all, choreRecordName: chore.id,
+                                                   occurrence: occurrence, by: by)
             for target in targets { _ = try? await db.deleteRecord(withID: target.recordID) }
         }
     }
 
-    func assign(_ chore: SharedChore, to member: String?, in household: Household) async throws {
-        try await update(chore, in: household) { $0["assignee"] = member }
+    func assign(_ chore: SharedChore, to members: [String], in household: Household) async throws {
+        try await update(chore, in: household) {
+            $0["assignees"] = members.isEmpty ? nil : members
+            $0["assignee"] = nil
+        }
     }
 
     func deleteChore(_ chore: SharedChore, in household: Household) async throws {
@@ -679,15 +746,19 @@ struct HouseholdService {
             .sorted { $0.date > $1.date }
     }
 
-    /// Clears the assignee on every chore currently assigned to `memberName`, so a
-    /// member who leaves (or is removed) doesn't leave stale assignments behind.
+    /// Removes `memberName` from every chore they're assigned to, so a member who
+    /// leaves (or is removed) doesn't leave stale assignments behind. Co-assignees are
+    /// kept; a chore drops to unassigned only if they were the sole assignee. Handles
+    /// both the new `assignees` list and the legacy single `assignee` field.
     func unassignChores(assignedTo memberName: String, in household: Household) async throws {
         let db = database(household.scope)
         let all = (try? await allRecords(in: household.zoneID, db: db)) ?? []
-        let targets = all.filter {
-            $0.recordType == RecordType.chore && $0["assignee"] as? String == memberName
-        }
-        for record in targets {
+        for record in all where record.recordType == RecordType.chore {
+            let current = (record["assignees"] as? [String])
+                ?? (record["assignee"] as? String).map { [$0] } ?? []
+            guard current.contains(memberName) else { continue }
+            let remaining = current.filter { $0 != memberName }
+            record["assignees"] = remaining.isEmpty ? nil : remaining
             record["assignee"] = nil
             _ = try? await db.save(record)
         }

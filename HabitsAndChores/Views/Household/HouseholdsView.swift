@@ -223,7 +223,7 @@ final class HouseholdsModel {
         applyLocal(household.id) { chores in
             guard let i = chores.firstIndex(where: { $0.id == chore.id }) else { return }
             chores[i] = sharedChore(id: chore.id, from: draft, createdAt: chore.createdAt,
-                                    isDone: chore.isDone, completedBy: chore.completedBy)
+                                    completedByMembers: chore.completedByMembers, isDone: chore.isDone)
             chores.sort { $0.title < $1.title }
         }
         enqueueAndFlush(.upsertChore(opID: UUID().uuidString, zone: ZoneRef(household),
@@ -234,9 +234,9 @@ final class HouseholdsModel {
     /// member in the rotation order (the same stable alphabetical order
     /// `rotatedAssignee` advances through), so it's never left unassigned.
     private func withInitialRotationAssignee(_ draft: ChoreDraft, in household: Household) -> ChoreDraft {
-        guard draft.rotates, !draft.isTodo, draft.assignee == nil else { return draft }
+        guard draft.rotates, !draft.isTodo, draft.assignees.isEmpty else { return draft }
         var draft = draft
-        draft.assignee = household.members.map(\.name).sorted().first
+        if let first = household.members.map(\.name).sorted().first { draft.assignees = [first] }
         return draft
     }
 
@@ -244,11 +244,12 @@ final class HouseholdsModel {
     /// anchor mirrors the draft's persisted `anchorDate`, so the optimistic row and the
     /// eventual server record share the same recurrence start.
     private func sharedChore(id: String, from draft: ChoreDraft, createdAt: Date? = nil,
-                             isDone: Bool = false, completedBy: String? = nil) -> SharedChore {
+                             completedByMembers: Set<String> = [], isDone: Bool = false) -> SharedChore {
         SharedChore(id: id, title: draft.title, details: draft.details,
                     kindRaw: draft.kind.rawValue, categoryRaw: draft.category.rawValue,
                     frequency: draft.frequency, symbolName: draft.symbolName, colorHue: draft.colorHue,
-                    createdAt: createdAt ?? draft.anchorDate ?? .now, assignee: draft.assignee, isDone: isDone, completedBy: completedBy,
+                    createdAt: createdAt ?? draft.anchorDate ?? .now, assignees: draft.assignees,
+                    completedByMembers: completedByMembers, isDone: isDone,
                     isTodo: draft.isTodo, dueDate: draft.dueDate, scheduledDate: draft.scheduledDate,
                     priorityRaw: draft.priority.rawValue, reminderModeRaw: draft.todoReminderMode.rawValue,
                     reminderDate: draft.reminderDate, reminderOffset: draft.reminderOffset,
@@ -278,9 +279,11 @@ final class HouseholdsModel {
 
         applyLocal(household.id) { chores in
             if let i = chores.firstIndex(where: { $0.id == chore.id }) {
-                chores[i].isDone = done
-                chores[i].completedBy = done ? by : nil
-                if let rotatedAssignee { chores[i].assignee = rotatedAssignee }
+                // Per-person: toggle only *my* check-off; co-assignees' ticks are untouched.
+                if done { chores[i].completedByMembers.insert(by) }
+                else { chores[i].completedByMembers.remove(by) }
+                chores[i].isDone = done   // my-perspective done state
+                if let rotatedAssignee { chores[i].assignees = [rotatedAssignee] }
             }
         }
         outbox.enqueue(.setCompletion(opID: UUID().uuidString, zone: ZoneRef(household),
@@ -288,18 +291,19 @@ final class HouseholdsModel {
                                       done: done, completionRecordName: UUID().uuidString))
         if let rotatedAssignee {
             outbox.enqueue(.assign(opID: UUID().uuidString, zone: ZoneRef(household),
-                                   choreRecordName: chore.id, member: rotatedAssignee))
+                                   choreRecordName: chore.id, members: [rotatedAssignee]))
         }
         flush()
     }
 
     /// The next assignee for a rotating chore (nil if it doesn't rotate, isn't
     /// recurring, or the household has no members). Advances on completion, retreats
-    /// on un-completion, using a stable alphabetical member order.
+    /// on un-completion, using a stable alphabetical member order. Rotation is a
+    /// single-owner concept, so it pivots on the chore's first assignee.
     private func nextAssignee(for chore: SharedChore, in household: Household, done: Bool) -> String? {
         guard chore.rotates, !chore.isTodo else { return nil }
         return HouseholdService.rotatedAssignee(names: household.members.map(\.name).sorted(),
-                                                current: chore.assignee, done: done)
+                                                current: chore.assignees.first, done: done)
     }
 
     func registerSubscriptions() async { await service.registerSubscriptions() }
@@ -328,9 +332,10 @@ final class HouseholdsModel {
                     case .all:              return true
                     case .mineOrUnassigned:
                         return HouseholdService.isMineForToday(
-                            assignee: chore.assignee, isDone: chore.isDone,
-                            completedBy: chore.completedBy, myName: myName)
-                    case .mineOnly:         return chore.assignee == myName
+                            assignees: chore.assignees, completedByMembers: chore.completedByMembers,
+                            myName: myName)
+                    case .mineOnly:
+                        return myName.map(chore.assignees.contains) ?? false
                     }
                 }
                 .map { (household, $0) }
@@ -372,12 +377,12 @@ final class HouseholdsModel {
     /// The household with the given id, if the user is still a member.
     func household(_ id: String) -> Household? { households.first { $0.id == id } }
 
-    func assign(_ chore: SharedChore, to member: String?, in household: Household) {
+    func assign(_ chore: SharedChore, to members: [String], in household: Household) {
         applyLocal(household.id) { chores in
-            if let i = chores.firstIndex(where: { $0.id == chore.id }) { chores[i].assignee = member }
+            if let i = chores.firstIndex(where: { $0.id == chore.id }) { chores[i].assignees = members }
         }
         enqueueAndFlush(.assign(opID: UUID().uuidString, zone: ZoneRef(household),
-                                choreRecordName: chore.id, member: member))
+                                choreRecordName: chore.id, members: members))
     }
 
     func delete(_ chore: SharedChore, in household: Household) {

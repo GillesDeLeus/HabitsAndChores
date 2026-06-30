@@ -99,7 +99,10 @@ HabitsAndChoresWidget/    WidgetKit "Today" widget (reads the shared local store
   editor has a `Household` picker: *Private* stores a local SwiftData object
   (mirrored only to your own devices); choosing a household writes a `SharedChore`
   into a CloudKit `CKShare` zone visible to its members. Both surface together in
-  the normal Today / Tasks / To-Do lists.
+  the normal Today / Tasks / To-Do lists. A shared recurring chore you complete
+  also feeds the same gamification (points, badges, streaks, weekly goal) as a
+  personal task. Because shared data loads from CloudKit, the Today screen waits
+  for it before showing, so personal and household tasks appear together.
 
 ## Localization
 

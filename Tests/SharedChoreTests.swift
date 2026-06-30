@@ -17,11 +17,13 @@ final class SharedChoreTests: XCTestCase {
     }
 
     private func chore(isTodo: Bool = false, frequency: FrequencyRule = .daily,
-                       createdAt: Date = .now) -> SharedChore {
+                       createdAt: Date = .now, assignees: [String] = [],
+                       completedByMembers: Set<String> = []) -> SharedChore {
         SharedChore(id: "1", title: "X", details: "",
                     kindRaw: TaskKind.chore.rawValue, categoryRaw: TaskCategory.home.rawValue,
                     frequency: frequency, symbolName: "house.fill", colorHue: 0.1,
-                    createdAt: createdAt, assignee: nil, isDone: false, completedBy: nil,
+                    createdAt: createdAt, assignees: assignees,
+                    completedByMembers: completedByMembers, isDone: false,
                     isTodo: isTodo)
     }
 
@@ -104,7 +106,7 @@ final class SharedChoreTests: XCTestCase {
         draft.symbolName = "creditcard.fill"
         draft.colorHue = 0.33
         draft.frequency = .monthly(day: 1)
-        draft.assignee = "Sam"
+        draft.assignees = ["Sam", "Bo"]
         draft.isTodo = true
         draft.dueDate = date(2026, 7, 1, 9)
         draft.scheduledDate = date(2026, 6, 30)
@@ -126,7 +128,7 @@ final class SharedChoreTests: XCTestCase {
         XCTAssertEqual(decoded.symbolName, draft.symbolName)
         XCTAssertEqual(decoded.colorHue, draft.colorHue)
         XCTAssertEqual(decoded.frequency, draft.frequency)
-        XCTAssertEqual(decoded.assignee, draft.assignee)
+        XCTAssertEqual(decoded.assignees, draft.assignees)
         XCTAssertEqual(decoded.isTodo, draft.isTodo)
         XCTAssertEqual(decoded.dueDate, draft.dueDate)
         XCTAssertEqual(decoded.scheduledDate, draft.scheduledDate)
@@ -146,13 +148,66 @@ final class SharedChoreTests: XCTestCase {
         // confirm the draft of a rotating recurring chore keeps the rotate flag.
         var c = chore(isTodo: false, frequency: .weekly(on: [2]))
         c.rotates = true
-        c.assignee = "Bo"
+        c.assignees = ["Bo"]
         let draft = ChoreDraft(c)
         XCTAssertTrue(draft.rotates)
-        XCTAssertEqual(draft.assignee, "Bo")
+        XCTAssertEqual(draft.assignees, ["Bo"])
         XCTAssertEqual(draft.frequency, .weekly(on: [2]))
         // Editing an existing chore must carry its anchor forward so the schedule
         // (and history) survives the edit instead of resetting to "now".
         XCTAssertEqual(draft.anchorDate, c.createdAt)
+    }
+
+    // MARK: - Per-person check-off (multi-assignee)
+
+    func testIsDoneForMemberAndFullyDone() {
+        // Three assignees, two have checked off → done for them, not for the third,
+        // and not fully done.
+        let c = chore(assignees: ["Anna", "Ben", "Cara"], completedByMembers: ["Anna", "Cara"])
+        XCTAssertTrue(c.isDone(for: "Anna"))
+        XCTAssertTrue(c.isDone(for: "Cara"))
+        XCTAssertFalse(c.isDone(for: "Ben"))
+        XCTAssertFalse(c.isFullyDone)
+        XCTAssertEqual(c.completedAssigneeCount, 2)
+        XCTAssertEqual(c.assigneeTarget, 3)
+        XCTAssertTrue(c.hasMultipleAssignees)
+    }
+
+    func testFullyDoneOnceEveryAssigneeCompletes() {
+        let c = chore(assignees: ["Anna", "Ben"], completedByMembers: ["Anna", "Ben"])
+        XCTAssertTrue(c.isFullyDone)
+        XCTAssertEqual(c.completedAssigneeCount, 2)
+    }
+
+    func testUnassignedIsDoneWhenAnyoneCompletes() {
+        // No assignees ("up for grabs"): fully done as soon as anyone completes it.
+        var c = chore(assignees: [], completedByMembers: [])
+        XCTAssertFalse(c.isFullyDone)
+        XCTAssertFalse(c.isDone(for: nil))
+        c.completedByMembers = ["Whoever"]
+        XCTAssertTrue(c.isFullyDone)
+        XCTAssertTrue(c.isDone(for: nil))
+        XCTAssertFalse(c.hasMultipleAssignees)
+    }
+
+    func testIsMineForToday_multiAssignee() {
+        let assignees = ["Anna", "Ben"]
+        // Assigned to me → mine.
+        XCTAssertTrue(HouseholdService.isMineForToday(assignees: assignees,
+                                                      completedByMembers: [], myName: "Anna"))
+        // Not assigned, not completed by me → not mine.
+        XCTAssertFalse(HouseholdService.isMineForToday(assignees: assignees,
+                                                       completedByMembers: [], myName: "Cara"))
+        // Unassigned (up for grabs) → mine.
+        XCTAssertTrue(HouseholdService.isMineForToday(assignees: [],
+                                                      completedByMembers: [], myName: "Cara"))
+        // Lingers after I complete my part even if reassigned away.
+        XCTAssertTrue(HouseholdService.isMineForToday(assignees: ["Ben"],
+                                                      completedByMembers: ["Anna"], myName: "Anna"))
+        // Anonymous user only ever sees unassigned chores.
+        XCTAssertFalse(HouseholdService.isMineForToday(assignees: assignees,
+                                                       completedByMembers: [], myName: nil))
+        XCTAssertTrue(HouseholdService.isMineForToday(assignees: [],
+                                                      completedByMembers: [], myName: nil))
     }
 }

@@ -157,12 +157,16 @@ private struct ChoreRow: View {
                             .strikethrough(chore.isDone, color: .secondary)
                             .foregroundStyle(chore.isDone ? .secondary : .primary)
                         HStack(spacing: 6) {
-                            if chore.isDone, let by = chore.completedBy {
+                            if chore.hasMultipleAssignees {
+                                // Per-person check-off: overall progress across assignees.
+                                Text(chore.frequency.localizedDescription)
+                                Text("· \(chore.progressSummary)")
+                            } else if chore.isDone, let by = chore.completedBy {
                                 Text("Done by \(by)")
                             } else {
                                 Text(chore.frequency.localizedDescription)
-                                if let assignee = chore.assignee {
-                                    Text("· \(assignee)")
+                                if let summary = chore.assigneeSummary() {
+                                    Text("· \(summary)")
                                 }
                                 if chore.rotates {
                                     Image(systemName: "arrow.triangle.2.circlepath")

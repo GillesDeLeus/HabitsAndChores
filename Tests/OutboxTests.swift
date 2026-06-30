@@ -15,7 +15,7 @@ final class OutboxTests: XCTestCase {
         draft.todoReminderMode = .dailyUntilDone
         draft.frequency = .weekly(on: [2, 4])
         draft.rotates = true
-        draft.assignee = "Sam"
+        draft.assignees = ["Sam", "Alex"]
 
         let data = try JSONEncoder().encode(draft)
         let back = try JSONDecoder().decode(ChoreDraft.self, from: data)
@@ -28,7 +28,7 @@ final class OutboxTests: XCTestCase {
         XCTAssertEqual(back.todoReminderMode, .dailyUntilDone)
         XCTAssertEqual(back.frequency, .weekly(on: [2, 4]))
         XCTAssertTrue(back.rotates)
-        XCTAssertEqual(back.assignee, "Sam")
+        XCTAssertEqual(back.assignees, ["Sam", "Alex"])
     }
 
     func testMutationQueueCodableRoundTrip() throws {
@@ -39,7 +39,7 @@ final class OutboxTests: XCTestCase {
             .deleteChore(opID: "2", zone: zone, recordName: "chore1"),
             .setCompletion(opID: "3", zone: zone, choreRecordName: "chore1",
                            occurrence: Date(timeIntervalSince1970: 0), by: "Sam", done: true, completionRecordName: "c1"),
-            .assign(opID: "4", zone: zone, choreRecordName: "chore1", member: "Alex"),
+            .assign(opID: "4", zone: zone, choreRecordName: "chore1", members: ["Alex", "Bo"]),
         ]
 
         let data = try JSONEncoder().encode(queue)
@@ -64,7 +64,7 @@ final class OutboxTests: XCTestCase {
         XCTAssertTrue(done)
         XCTAssertEqual(completionRecordName, "c1")
 
-        guard case let .assign(_, _, _, member) = back[3] else { return XCTFail("expected assign") }
-        XCTAssertEqual(member, "Alex")
+        guard case let .assign(_, _, _, members) = back[3] else { return XCTFail("expected assign") }
+        XCTAssertEqual(members, ["Alex", "Bo"])
     }
 }
