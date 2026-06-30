@@ -41,6 +41,7 @@ struct AwardsView: View {
                     .accessibilityLabel("Friends")
                 }
             }
+            .settingsToolbar()
         }
     }
 

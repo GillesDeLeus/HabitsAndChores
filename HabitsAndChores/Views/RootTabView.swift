@@ -29,8 +29,11 @@ struct RootTabView: View {
             AwardsView()
                 .tabItem { Label("Awards", systemImage: "trophy.fill") }
 
-            SettingsView()
-                .tabItem { Label("Settings", systemImage: "gearshape.fill") }
+            NavigationStack {
+                HouseholdsView()
+                    .settingsToolbar()
+            }
+            .tabItem { Label("Households", systemImage: "house.and.flag.fill") }
         }
         .errorBanner()
         .onAppear { if !onboardingComplete { showOnboarding = true } }

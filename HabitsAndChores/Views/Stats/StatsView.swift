@@ -46,6 +46,7 @@ struct StatsView: View {
                                            description: Text("Complete some tasks to see your progress."))
                 }
             }
+            .settingsToolbar()
         }
     }
 

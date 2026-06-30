@@ -33,6 +33,7 @@ struct TasksHostView: View {
                     .frame(maxWidth: 240)
                 }
             }
+            .settingsToolbar()
         }
     }
 }

@@ -21,6 +21,11 @@ struct TodayView: View {
     /// horizontal swipe move it so you can look ahead at what's planned (or back).
     @State private var selectedDay = Calendar.current.startOfDay(for: .now)
 
+    // Tap-to-edit state: each is set when the user taps a row's label area.
+    @State private var editingTask: TaskItem?
+    @State private var editingTodo: TodoItem?
+    @State private var editingShared: TodayEditingShared?
+
     private let calendar = Calendar.current
     private var isViewingToday: Bool { calendar.isDate(selectedDay, inSameDayAs: today) }
 
@@ -125,12 +130,22 @@ struct TodayView: View {
                     .accessibilityLabel("Calendar")
                 }
             }
+            .settingsToolbar()
             .task(id: statsKey) { summary = GamificationEngine.summary(for: tasks, shared: households.mySharedChoreStats()) }
             .onReceive(NotificationCenter.default.publisher(for: .NSCalendarDayChanged)) { _ in
                 refreshToday()
             }
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { refreshToday() }
+            }
+            .sheet(item: $editingTask) { task in
+                NavigationStack { AddEditTaskView(task: task) }
+            }
+            .sheet(item: $editingTodo) { todo in
+                NavigationStack { TodoEditView(todo: todo) }
+            }
+            .sheet(item: $editingShared) { pair in
+                SharedChoreEditorSheet(pair: pair)
             }
         }
     }
@@ -197,29 +212,35 @@ struct TodayView: View {
                         Section(header: Text(isViewingToday ? "Due today" : "Scheduled")) {
                             ForEach(dueTasks) { task in
                                 let day = occurrenceDay(for: task)
-                                TaskRow(task: task, day: day, toggle: { toggle(task, on: day) })
+                                TaskRow(task: task, day: day, toggle: { toggle(task, on: day) },
+                                        onTap: { editingTask = task })
                             }
                             // Shared completion is per current occurrence, so it's live
                             // on today and read-only (shown not-done) on other days.
                             ForEach(sharedDueTasks, id: \.chore.id) { item in
-                                SharedTaskRow(chore: displayChore(item.chore), householdName: item.household.name) {
-                                    guard isViewingToday else { return }
-                                    households.setDone(item.chore, in: item.household, !item.chore.isDone)
-                                    Haptics.tap()
-                                }
+                                SharedTaskRow(chore: displayChore(item.chore), householdName: item.household.name,
+                                             toggle: {
+                                                 guard isViewingToday else { return }
+                                                 households.setDone(item.chore, in: item.household, !item.chore.isDone)
+                                                 Haptics.tap()
+                                             },
+                                             onTap: { editingShared = TodayEditingShared(household: item.household, chore: item.chore) })
                             }
                         }
                     }
                     if hasTodos {
                         Section(header: Text("To-dos")) {
                             ForEach(dueTodos) { todo in
-                                TodayTodoRow(todo: todo) { toggleTodo(todo) }
+                                TodayTodoRow(todo: todo, toggle: { toggleTodo(todo) },
+                                             onTap: { editingTodo = todo })
                             }
                             ForEach(sharedTodos, id: \.chore.id) { item in
-                                TodaySharedTodoRow(chore: item.chore, householdName: item.household.name) {
-                                    households.setDone(item.chore, in: item.household, true)
-                                    Haptics.tap()
-                                }
+                                TodaySharedTodoRow(chore: item.chore, householdName: item.household.name,
+                                                   toggle: {
+                                                       households.setDone(item.chore, in: item.household, true)
+                                                       Haptics.tap()
+                                                   },
+                                                   onTap: { editingShared = TodayEditingShared(household: item.household, chore: item.chore) })
                             }
                         }
                     }
@@ -300,6 +321,7 @@ struct TodayView: View {
 private struct TodayTodoRow: View {
     let todo: TodoItem
     let toggle: () -> Void
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -311,6 +333,17 @@ private struct TodayTodoRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Mark done")
 
+            if let onTap {
+                Button(action: onTap) { todoLabel }.buttonStyle(.plain)
+            } else {
+                todoLabel
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var todoLabel: some View {
+        HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(todo.title)
                 HStack(spacing: 8) {
@@ -327,7 +360,6 @@ private struct TodayTodoRow: View {
             }
             Spacer()
         }
-        .contentShape(Rectangle())
     }
 }
 
@@ -335,6 +367,7 @@ private struct TodaySharedTodoRow: View {
     let chore: SharedChore
     let householdName: String
     let toggle: () -> Void
+    var onTap: (() -> Void)? = nil
 
     var body: some View {
         HStack(spacing: 12) {
@@ -346,6 +379,17 @@ private struct TodaySharedTodoRow: View {
             .buttonStyle(.plain)
             .accessibilityLabel("Mark done")
 
+            if let onTap {
+                Button(action: onTap) { sharedTodoLabel }.buttonStyle(.plain)
+            } else {
+                sharedTodoLabel
+            }
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var sharedTodoLabel: some View {
+        HStack {
             VStack(alignment: .leading, spacing: 2) {
                 Text(chore.title)
                 HStack(spacing: 4) {
@@ -366,7 +410,6 @@ private struct TodaySharedTodoRow: View {
             }
             Spacer()
         }
-        .contentShape(Rectangle())
     }
 }
 
@@ -422,6 +465,27 @@ private struct ProgressHeader: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.vertical, 8)
+    }
+}
+
+/// Carries the household + chore needed to open the right editor from TodayView.
+private struct TodayEditingShared: Identifiable {
+    var id: String { chore.id }
+    let household: Household
+    let chore: SharedChore
+    var isTodo: Bool { chore.isTodo }
+}
+
+private struct SharedChoreEditorSheet: View {
+    let pair: TodayEditingShared
+    var body: some View {
+        NavigationStack {
+            if pair.isTodo {
+                TodoEditView(subject: .shared(pair.household, pair.chore))
+            } else {
+                AddEditTaskView(shared: pair.chore, in: pair.household)
+            }
+        }
     }
 }
 

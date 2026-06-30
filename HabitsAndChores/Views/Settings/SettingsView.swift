@@ -3,6 +3,7 @@ import SwiftData
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var context
+    @Environment(\.dismiss) private var dismiss
     @Environment(LanguageManager.self) private var language
     @AppStorage("appAppearance") private var appearance = "system"
 
@@ -43,14 +44,6 @@ struct SettingsView: View {
                         if let url = URL(string: UIApplication.openSettingsURLString) {
                             UIApplication.shared.open(url)
                         }
-                    }
-                }
-
-                Section(header: Text("Sharing")) {
-                    NavigationLink {
-                        HouseholdsView()
-                    } label: {
-                        Label("Household chores", systemImage: "house.and.flag.fill")
                     }
                 }
 
@@ -99,6 +92,11 @@ struct SettingsView: View {
                 #endif
             }
             .navigationTitle("Settings")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
             .preferredColorScheme(colorScheme)
             #if DEBUG
             .alert("Sample data", isPresented: .constant(devAlert != nil), presenting: devAlert) { _ in
